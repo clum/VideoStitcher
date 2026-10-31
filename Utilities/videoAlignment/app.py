@@ -1,14 +1,19 @@
 """Tkinter interface for manually aligning two video and audio recordings."""
 
 import base64
+import json
 import subprocess
 import time
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .alignment import Alignment, calculate_alignment
-from .media import MediaInfo, frame_png, probe, require_tools
+from .media import MediaInfo, audio_peaks, frame_png, probe, require_tools
+
+SETTINGS_PATH = Path(__file__).resolve().parents[2] / "settings.json"
 
 
 def _seconds(value: Fraction) -> str:
@@ -30,6 +35,8 @@ class VideoStitcherApp:
         root.title("Video Stitcher — Manual Alignment")
         root.minsize(1000, 760)
         self.media: list[MediaInfo | None] = [None, None]
+        self.waveforms: list[list[float] | None] = [None, None]
+        self.waveform_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="audio-waveform")
         self.photos: list[tk.PhotoImage | None] = [None, None]
         self.offset = Fraction(0)
         self.cursor = Fraction(0)
@@ -41,12 +48,13 @@ class VideoStitcherApp:
         self.play_end = Fraction(0)
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.after(100, self.load_settings_files)
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill="x")
-        ttk.Button(top, text="Choose reference video…", command=lambda: self.choose(0)).pack(side="left")
-        ttk.Button(top, text="Choose second video…", command=lambda: self.choose(1)).pack(side="left", padx=(8, 0))
+        ttk.Button(top, text="Change reference video…", command=lambda: self.choose(0)).pack(side="left")
+        ttk.Button(top, text="Change second video…", command=lambda: self.choose(1)).pack(side="left", padx=(8, 0))
         self.file_labels = [ttk.Label(top, text="Reference: not selected"), ttk.Label(top, text="Second: not selected")]
         self.file_labels[0].pack(side="left", padx=(16, 0))
         self.file_labels[1].pack(side="left", padx=(12, 0))
@@ -69,7 +77,18 @@ class VideoStitcherApp:
 
         timeline_frame = ttk.LabelFrame(self.root, text="Shared timeline · drag the second clip to align", padding=10)
         timeline_frame.pack(fill="x", padx=10, pady=6)
-        self.timeline = tk.Canvas(timeline_frame, height=100, background="#f4f5f7", highlightthickness=0)
+        zoom_controls = ttk.Frame(timeline_frame)
+        zoom_controls.pack(fill="x", pady=(0, 4))
+        ttk.Label(zoom_controls, text="Timeline zoom").pack(side="left")
+        self.zoom_level = 1.0
+        self.zoom_var = tk.DoubleVar(value=self.zoom_level)
+        self.zoom_slider = ttk.Scale(zoom_controls, from_=1, to=20, variable=self.zoom_var, command=self.set_zoom)
+        self.zoom_slider.pack(side="left", fill="x", expand=True, padx=8)
+        self.zoom_label = ttk.Label(zoom_controls, text="1.0×", width=6, anchor="e")
+        self.zoom_label.pack(side="left")
+        ttk.Button(zoom_controls, text="Reset", command=self.reset_zoom).pack(side="left", padx=(8, 0))
+        self.zoom_slider.bind("<ButtonRelease-1>", lambda _event: self.set_zoom(self.zoom_var.get()))
+        self.timeline = tk.Canvas(timeline_frame, height=128, background="#f4f5f7", highlightthickness=0)
         self.timeline.pack(fill="x")
         self.timeline.bind("<Configure>", lambda _event: self.draw_timeline())
         self.timeline.bind("<Button-1>", self.timeline_click)
@@ -98,8 +117,8 @@ class VideoStitcherApp:
         self.offset_label.pack(anchor="w")
         self.result_label = ttk.Label(align_frame, text="Choose both videos to calculate shared trims.", justify="left")
         self.result_label.pack(anchor="w", pady=(6, 0))
-        self.copy_button = ttk.Button(align_frame, text="Copy offset", command=self.copy_offset)
-        self.copy_button.pack(anchor="e", pady=(4, 0))
+        self.save_offset_button = ttk.Button(align_frame, text="Save offset to settings", command=self.save_offset)
+        self.save_offset_button.pack(anchor="e", pady=(4, 0))
         self.status = ttk.Label(self.root, text="Ready. FFmpeg, ffprobe, and ffplay must be available on PATH.", padding=(10, 4))
         self.status.pack(fill="x", side="bottom")
 
@@ -112,15 +131,79 @@ class VideoStitcherApp:
         except Exception as exc:
             messagebox.showerror("Could not open video", str(exc), parent=self.root)
             return
+        self._set_media(index, info)
+
+    def _set_media(self, index: int, info: MediaInfo, refresh: bool = True, reset_offset: bool = True) -> None:
         self.media[index] = info
+        self.waveforms[index] = None
         self.file_labels[index].configure(text=f"{'Reference' if index == 0 else 'Second'}: {info.path.name}")
         rate = info.frame_rate or "unknown"
-        self.info_labels[index].configure(text=f"{info.width}×{info.height} · {float(info.duration):.3f} s · {rate} fps · {'audio' if info.has_audio else 'no audio'}")
-        if not info.has_audio:
-            messagebox.showwarning("No audio track", f"{info.path.name} has no audio stream. Its video can still be aligned visually.", parent=self.root)
-        if index == 1:
+        self.info_labels[index].configure(text=(
+            f"{info.width}×{info.height} · first {float(info.duration):.3f} s of {float(info.source_duration):.3f} s"
+            f" · {rate} fps · {'audio' if info.has_audio else 'no audio'}"
+        ))
+        if info.has_audio:
+            self.status.configure(text=f"Building audio waveform for {info.path.name}…")
+            future = self.waveform_executor.submit(audio_peaks, info)
+
+            def waveform_done(completed, i=index, media_path=info.path):
+                try:
+                    self.root.after(0, self._waveform_ready, i, media_path, completed)
+                except tk.TclError:
+                    pass
+
+            future.add_done_callback(waveform_done)
+        else:
+            self.status.configure(text=f"{info.path.name} has no audio stream; align using its video preview.")
+        if index == 1 and reset_offset:
             self.offset = Fraction(0)
+        if refresh:
+            self.refresh()
+
+    def load_settings_files(self) -> None:
+        """Load configured inputs without opening file chooser dialogs."""
+        try:
+            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+            if not isinstance(settings, dict):
+                raise ValueError("The settings file must contain a JSON object.")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            self.status.configure(text=f"Could not read settings.json: {exc}")
+            messagebox.showerror("Settings error", f"Could not read {SETTINGS_PATH}:\n{exc}", parent=self.root)
+            return
+
+        scenario = str(settings.get("ScenarioName", "")).strip()
+        if scenario:
+            self.root.title(f"Video Stitcher — {scenario}")
+
+        configured_offset = settings.get("CameraBOffset_s", 0.0)
+        try:
+            if isinstance(configured_offset, bool):
+                raise ValueError
+            self.offset = Fraction(str(configured_offset))
+        except (ValueError, ZeroDivisionError):
+            self.offset = Fraction(0)
+            self.status.configure(text="CameraBOffset_s is invalid; using 0 seconds.")
+
+        missing_paths = []
+        for index, key in enumerate(("CameraAVideoFilePath", "CameraBVideoFilePath")):
+            raw_path = str(settings.get(key, "")).strip()
+            if not raw_path:
+                missing_paths.append(key)
+                continue
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = SETTINGS_PATH.parent / path
+            try:
+                info = probe(path)
+            except Exception as exc:
+                messagebox.showerror(f"Could not open {'reference' if index == 0 else 'second'} video", str(exc), parent=self.root)
+                continue
+            self._set_media(index, info, refresh=False, reset_offset=False)
+
         self.refresh()
+        if missing_paths:
+            self.status.configure(text="Set " + " and ".join(missing_paths) + " in settings.json, or use the Change video buttons.")
 
     def duration(self, index: int) -> Fraction:
         info = self.media[index]
@@ -134,13 +217,43 @@ class VideoStitcherApp:
         end = max(a.duration, self.offset + b.duration)
         return start, max(end, start + Fraction(1, 100))
 
+    def view_bounds(self) -> tuple[Fraction, Fraction]:
+        full_start, full_end = self.bounds()
+        if self.zoom_level <= 1.0:
+            return full_start, full_end
+        full_span = full_end - full_start
+        view_span = full_span / Fraction(str(self.zoom_level))
+        left = self.cursor - view_span / 2
+        left = min(max(left, full_start), full_end - view_span)
+        return left, left + view_span
+
+    def set_zoom(self, value: str | float) -> None:
+        self.zoom_level = min(20.0, max(1.0, float(value)))
+        self.zoom_label.configure(text=f"{self.zoom_level:.1f}×")
+        self.draw_timeline()
+
+    def reset_zoom(self) -> None:
+        self.zoom_var.set(1.0)
+        self.set_zoom(1.0)
+
+    def _waveform_ready(self, index, path, future) -> None:
+        current = self.media[index]
+        if not current or current.path != path:
+            return
+        try:
+            self.waveforms[index] = future.result()
+            self.status.configure(text=f"Audio waveform ready for {current.path.name}.")
+        except Exception as exc:
+            self.status.configure(text=f"Could not create audio waveform: {exc}")
+        self.draw_timeline()
+
     def timeline_x(self, value: Fraction) -> float:
-        start, end = self.bounds()
+        start, end = self.view_bounds()
         width = max(1, self.timeline.winfo_width() - 30)
         return 15 + float((value - start) / (end - start)) * width
 
     def x_timeline(self, x: float) -> Fraction:
-        start, end = self.bounds()
+        start, end = self.view_bounds()
         width = max(1, self.timeline.winfo_width() - 30)
         return start + Fraction(str(max(0, min(1, (x - 15) / width)))) * (end - start)
 
@@ -149,9 +262,9 @@ class VideoStitcherApp:
             return
         canvas = self.timeline
         canvas.delete("all")
-        start, end = self.bounds()
+        start, end = self.view_bounds()
         width = max(1, canvas.winfo_width() - 30)
-        for index, y in ((0, 30), (1, 68)):
+        for index, y in ((0, 17), (1, 70)):
             info = self.media[index]
             if not info:
                 continue
@@ -159,19 +272,51 @@ class VideoStitcherApp:
             clip_end = clip_start + info.duration
             x1, x2 = self.timeline_x(clip_start), self.timeline_x(clip_end)
             color = "#4279c7" if index == 0 else "#36a179"
-            canvas.create_text(3, y + 8, text="A" if index == 0 else "B", anchor="w", font=("Segoe UI", 9, "bold"))
-            canvas.create_rectangle(x1, y, x2, y + 17, fill=color, outline="")
-            if info.has_audio:
-                canvas.create_line(x1, y + 11, x2, y + 11, fill="white", width=2, dash=(3, 2))
+            canvas.create_text(3, y + 7, text="A" if index == 0 else "B", anchor="w", font=("Segoe UI", 9, "bold"))
+            canvas.create_rectangle(x1, y, x2, y + 14, fill=color, outline="")
+            self._draw_waveform(index, x1, x2, y + 32)
         if self.media[0] and self.media[1]:
             common_start = max(Fraction(0), self.offset)
             common_end = min(self.duration(0), self.offset + self.duration(1))
             if common_end > common_start:
-                canvas.create_rectangle(self.timeline_x(common_start), 5, self.timeline_x(common_end), 92, outline="#e39b35", width=2)
+                canvas.create_rectangle(self.timeline_x(common_start), 5, self.timeline_x(common_end), 120, outline="#e39b35", width=2)
         cx = self.timeline_x(self.cursor)
-        canvas.create_line(cx, 2, cx, 96, fill="#d84343", width=2)
-        canvas.create_text(16, 96, text=f"{float(start):.2f}s", anchor="sw", fill="#555")
-        canvas.create_text(width + 15, 96, text=f"{float(end):.2f}s", anchor="se", fill="#555")
+        canvas.create_line(cx, 2, cx, 122, fill="#d84343", width=2)
+        canvas.create_text(16, 126, text=f"{float(start):.3f}s", anchor="sw", fill="#555")
+        canvas.create_text(width + 15, 126, text=f"{float(end):.3f}s", anchor="se", fill="#555")
+
+    def _draw_waveform(self, index: int, x1: float, x2: float, center: float) -> None:
+        info = self.media[index]
+        if not info or not info.has_audio or x2 <= x1:
+            return
+        canvas = self.timeline
+        visible_x1 = max(x1, 15)
+        visible_x2 = min(x2, self.timeline.winfo_width() - 15)
+        if visible_x2 <= visible_x1:
+            return
+        canvas.create_line(visible_x1, center, visible_x2, center, fill="#c7cbd0", width=1)
+        peaks = self.waveforms[index]
+        if not peaks:
+            return
+
+        # Sample at every other screen pixel so dragging remains responsive.
+        sample_xs = list(range(int(visible_x1), max(int(visible_x1) + 1, int(visible_x2)), 2))
+        amplitudes = []
+        for x in sample_xs:
+            fraction = min(1.0, max(0.0, (x - x1) / (x2 - x1)))
+            peak_index = min(len(peaks) - 1, int(fraction * len(peaks)))
+            amplitudes.append(max(1.0, peaks[peak_index] * 14.0))
+
+        if index == 0:
+            # Filled waveform for A, following the reference graphic.
+            upper = [(x, center - amp) for x, amp in zip(sample_xs, amplitudes)]
+            lower = [(x, center + amp) for x, amp in zip(reversed(sample_xs), reversed(amplitudes))]
+            if upper:
+                canvas.create_polygon(upper + lower, fill="#f26e6e", outline="")
+        else:
+            # Fine vertical peaks for B, following the reference graphic.
+            for x, amp in zip(sample_xs, amplitudes):
+                canvas.create_line(x, center - amp, x, center + amp, fill="#83c7dc", width=2)
 
     def timeline_click(self, event: tk.Event) -> None:
         if not self.media[1]:
@@ -244,10 +389,20 @@ class VideoStitcherApp:
             f"B trims — start {_seconds(trims['b_start'])} s, end {_seconds(trims['b_end'])} s"
         ))
 
-    def copy_offset(self) -> None:
-        self.root.clipboard_clear()
-        self.root.clipboard_append(_seconds(self.offset))
-        self.status.configure(text=f"Copied signed offset {_seconds(self.offset)} seconds.")
+    def save_offset(self) -> None:
+        try:
+            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+            if not isinstance(settings, dict):
+                raise ValueError("The settings file must contain a JSON object.")
+            settings["CameraBOffset_s"] = float(self.offset)
+            temporary_path = SETTINGS_PATH.with_suffix(".json.tmp")
+            temporary_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+            temporary_path.replace(SETTINGS_PATH)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror("Could not save offset", f"Could not update {SETTINGS_PATH}:\n{exc}", parent=self.root)
+            return
+        self.status.configure(text=f"Saved signed offset {_seconds(self.offset)} seconds to settings.json.")
 
     def toggle_play(self) -> None:
         if self.playing:
@@ -282,7 +437,7 @@ class VideoStitcherApp:
         self.play_start_cursor = self.cursor
         self.play_started = time.monotonic()
         self.play_button.configure(text="Pause")
-        self.status.configure(text="Playing both clips on the shared timeline. The dashed lines indicate audio tracks.")
+        self.status.configure(text="Playing both clips. A is the filled red waveform; B is the blue peak waveform.")
         self._tick()
 
     def _tick(self) -> None:
@@ -306,6 +461,7 @@ class VideoStitcherApp:
 
     def close(self) -> None:
         self.stop_playback()
+        self.waveform_executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 
 

@@ -1,0 +1,6 @@
+{
+  "ScenarioName": "26_10_30_Test",
+  "CameraAVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraA.MP4",
+  "CameraBVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraB.MP4",
+  "CameraBOffset_s": -0.020613261666066796
+}

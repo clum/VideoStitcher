@@ -6,12 +6,13 @@ Build a Python desktop application that helps a user manually align two recordin
 
 ## User workflow
 
-1. Let the user choose two video files. Treat the first as the reference and the second as the clip being aligned. Do not modify source files.
+1. On startup, read the repository-root `settings.json` and load `CameraAVideoFilePath` as the reference and `CameraBVideoFilePath` as the second clip. Resolve relative paths from the repository root. Load `CameraBOffset_s` as the initial signed offset. Keep controls for changing either input during the session. Do not modify source files.
 2. Read each file's duration, frame rate or timestamp information, dimensions, and audio stream availability. Show clear errors for unreadable files and warn when either clip has no audio.
-3. Display both videos and their audio tracks in a common timeline. Provide playback controls and allow the user to drag the second clip earlier or later relative to the first. Moving the second clip must move its video and audio together. Keep the reference clip fixed.
+   - Limit the active alignment window to the first 30 seconds of each file. Use this window for previews, playback, overlap, and trim calculations, and show the user that the rest of each source clip is outside the current alignment window.
+3. Display both videos and their audio waveforms in a common timeline. Make the waveforms easy to compare, with distinct styles or colors for A and B. Provide a timeline zoom control centered on the current playhead so the user can make fine alignment adjustments. Allow the user to drag the second clip earlier or later relative to the first. Moving the second clip must move its video and audio waveform together. Keep the reference clip fixed.
 4. Let the user play or scrub both clips while they are aligned on the timeline, so visual events and sound can be compared. Show the current offset with sufficient precision and make the drag interaction usable for fine adjustments.
 5. Once the user accepts the alignment, calculate the overlapping interval. Report the time offset and the start/end crop amounts for both inputs. Both resulting clips must cover the same event interval and have exactly the same duration.
-6. Present the result clearly, with a copyable offset in seconds and a human-readable time format. Keep the alignment result available independently of any later export feature.
+6. Present the result clearly, with the signed offset in seconds and a human-readable time format. Let the user save the current offset to `CameraBOffset_s` in the repository-root `settings.json`, preserving the other settings.
 
 ## Offset and crop conventions
 
@@ -34,6 +35,7 @@ Build a Python desktop application that helps a user manually align two recordin
 - Define a stable main application entry point that can be called from both the example launcher and normal application startup.
 - Preserve source media. Any future export must write new files and must use the calculated common interval for both clips.
 - Use a media playback approach that supports both video and audio and handles differing frame rates, stream timestamps, and audio sample rates. Keep playback position and offset calculations based on media timestamps rather than assuming both videos have identical frame rates.
+- Visualize audio as an amplitude waveform on each clip's timeline row; do not represent audio only with a dashed line. Build the waveform from the active first-30-second window and keep it attached to its video when the second clip moves.
 - Use precise internal time values (for example, integer stream time-base ticks or rational values where practical). Round only for display or when an export format requires frame boundaries. Explain any frame-boundary rounding in the result.
 - Keep media probing, offset/overlap calculations, and UI behavior in separable modules so the calculations can be maintained independently of the interface.
 - Handle paths with spaces and Unicode, long clips, seeking, paused playback, and missing audio without silently shifting the requested offset.
