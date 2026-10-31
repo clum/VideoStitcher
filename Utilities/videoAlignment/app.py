@@ -11,6 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .alignment import Alignment, calculate_alignment
+from .export import export_aligned_pair
 from .media import MediaInfo, audio_peaks, frame_png, probe, require_tools
 
 SETTINGS_PATH = Path(__file__).resolve().parents[2] / "settings.json"
@@ -37,6 +38,8 @@ class VideoStitcherApp:
         self.media: list[MediaInfo | None] = [None, None]
         self.waveforms: list[list[float] | None] = [None, None]
         self.waveform_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="audio-waveform")
+        self.export_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aligned-export")
+        self.export_in_progress = False
         self.photos: list[tk.PhotoImage | None] = [None, None]
         self.offset = Fraction(0)
         self.cursor = Fraction(0)
@@ -119,6 +122,8 @@ class VideoStitcherApp:
         self.result_label.pack(anchor="w", pady=(6, 0))
         self.save_offset_button = ttk.Button(align_frame, text="Save offset to settings", command=self.save_offset)
         self.save_offset_button.pack(anchor="e", pady=(4, 0))
+        self.export_button = ttk.Button(align_frame, text="Create aligned clips", command=self.start_export, state="disabled")
+        self.export_button.pack(anchor="e", pady=(4, 0))
         self.status = ttk.Label(self.root, text="Ready. FFmpeg, ffprobe, and ffplay must be available on PATH.", padding=(10, 4))
         self.status.pack(fill="x", side="bottom")
 
@@ -157,8 +162,13 @@ class VideoStitcherApp:
             self.status.configure(text=f"{info.path.name} has no audio stream; align using its video preview.")
         if index == 1 and reset_offset:
             self.offset = Fraction(0)
+        self._update_export_button()
         if refresh:
             self.refresh()
+
+    def _update_export_button(self) -> None:
+        ready = all(self.media) and not self.export_in_progress
+        self.export_button.configure(state="normal" if ready else "disabled")
 
     def load_settings_files(self) -> None:
         """Load configured inputs without opening file chooser dialogs."""
@@ -404,6 +414,63 @@ class VideoStitcherApp:
             return
         self.status.configure(text=f"Saved signed offset {_seconds(self.offset)} seconds to settings.json.")
 
+    def start_export(self) -> None:
+        media_a, media_b = self.media
+        if not media_a or not media_b:
+            messagebox.showinfo("Choose two videos", "Both videos must be loaded before creating aligned clips.", parent=self.root)
+            return
+        try:
+            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+            if not isinstance(settings, dict):
+                raise ValueError("The settings file must contain a JSON object.")
+            scenario = str(settings.get("ScenarioName", "")).strip()
+            if not scenario:
+                raise ValueError("Set ScenarioName in settings.json before exporting.")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror("Could not start export", str(exc), parent=self.root)
+            return
+
+        output_dir = SETTINGS_PATH.parent / "Results" / "Step01_AlignedVideos"
+        self.stop_playback()
+        self.export_in_progress = True
+        self._update_export_button()
+        self.status.configure(text="Preparing aligned clip exports…")
+
+        def report_progress(text: str) -> None:
+            try:
+                self.root.after(0, lambda: self.status.configure(text=text))
+            except tk.TclError:
+                pass
+
+        future = self.export_executor.submit(
+            export_aligned_pair, media_a, media_b, self.offset, scenario, output_dir, report_progress
+        )
+
+        def export_done(completed) -> None:
+            try:
+                self.root.after(0, self._export_finished, completed)
+            except tk.TclError:
+                pass
+
+        future.add_done_callback(export_done)
+
+    def _export_finished(self, future) -> None:
+        self.export_in_progress = False
+        self._update_export_button()
+        try:
+            path_a, path_b, duration = future.result()
+        except Exception as exc:
+            self.status.configure(text=f"Aligned clip export failed: {exc}")
+            messagebox.showerror("Export failed", str(exc), parent=self.root)
+            return
+        self.status.configure(text=f"Created equal-duration aligned clips ({float(duration):.6f} s).")
+        messagebox.showinfo(
+            "Aligned clips created",
+            f"Camera A: {path_a}\nCamera B: {path_b}\n\nBoth clips are {float(duration):.6f} seconds long.",
+            parent=self.root,
+        )
+
     def toggle_play(self) -> None:
         if self.playing:
             self.stop_playback()
@@ -462,6 +529,7 @@ class VideoStitcherApp:
     def close(self) -> None:
         self.stop_playback()
         self.waveform_executor.shutdown(wait=False, cancel_futures=True)
+        self.export_executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 
 

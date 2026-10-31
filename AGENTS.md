@@ -13,6 +13,7 @@ Build a Python desktop application that helps a user manually align two recordin
 4. Let the user play or scrub both clips while they are aligned on the timeline, so visual events and sound can be compared. Show the current offset with sufficient precision and make the drag interaction usable for fine adjustments.
 5. Once the user accepts the alignment, calculate the overlapping interval. Report the time offset and the start/end crop amounts for both inputs. Both resulting clips must cover the same event interval and have exactly the same duration.
 6. Present the result clearly, with the signed offset in seconds and a human-readable time format. Let the user save the current offset to `CameraBOffset_s` in the repository-root `settings.json`, preserving the other settings.
+7. Provide a control to export the current alignment. Apply the current signed offset to B, crop A and B to the shared interval, and write an equal-duration MP4 pair under `Results/Step01_AlignedVideos/`. Prefix both filenames with the sanitized `ScenarioName` from `settings.json`. Never overwrite an existing result pair; select an unused numbered suffix instead.
 
 ## Offset and crop conventions
 
@@ -33,10 +34,11 @@ Build a Python desktop application that helps a user manually align two recordin
 - Include an example Python script under `Test/` that invokes the main application entry point, so users and developers have a clear pattern for starting the app.
 - Encapsulate application behavior in callable Python scripts, functions, classes, and/or libraries. Store this code under `Utilities/` in an organized package structure, with the user interface calling reusable functionality where practical.
 - Define a stable main application entry point that can be called from both the example launcher and normal application startup.
-- Preserve source media. Any future export must write new files and must use the calculated common interval for both clips.
+- Preserve source media. Export must write new files and must use the calculated common interval for both clips.
 - Use a media playback approach that supports both video and audio and handles differing frame rates, stream timestamps, and audio sample rates. Keep playback position and offset calculations based on media timestamps rather than assuming both videos have identical frame rates.
 - Visualize audio as an amplitude waveform on each clip's timeline row; do not represent audio only with a dashed line. Build the waveform from the active first-30-second window and keep it attached to its video when the second clip moves.
 - Use precise internal time values (for example, integer stream time-base ticks or rational values where practical). Round only for display or when an export format requires frame boundaries. Explain any frame-boundary rounding in the result.
+- Encode both exported videos at the same output frame rate and frame count so their video durations match exactly. Report the resulting frame-rounded duration to the user.
 - Keep media probing, offset/overlap calculations, and UI behavior in separable modules so the calculations can be maintained independently of the interface.
 - Handle paths with spaces and Unicode, long clips, seeking, paused playback, and missing audio without silently shifting the requested offset.
 - Do not infer or automatically change the user's chosen alignment. The user controls the second clip's position; any automatic assistance must remain optional and must not replace the displayed manual offset.
@@ -47,4 +49,5 @@ Build a Python desktop application that helps a user manually align two recordin
 - Dragging the second video changes its signed offset while keeping its audio attached.
 - The app displays the exact signed offset and derives the shared interval and both clips' beginning and ending crop amounts consistently.
 - The resulting clips' requested time span is equal, and the app reports when the selected offset leaves no shared interval.
+- Export creates a same-duration pair under `Results/Step01_AlignedVideos/` with filenames beginning with `ScenarioName`, while preserving source files and existing results.
 - Original files remain untouched.
