@@ -29,6 +29,9 @@ Build a Python desktop application that helps a user manually align two recordin
 ## Product and implementation guidance
 
 - Keep the interface focused on selecting two files, comparing synchronized playback, adjusting the second clip, and reading the resulting offset and trims.
+- Include an example Python script under `Test/` that invokes the main application entry point, so users and developers have a clear pattern for starting the app.
+- Encapsulate application behavior in callable Python scripts, functions, classes, and/or libraries. Store this code under `Utilities/` in an organized package structure, with the user interface calling reusable functionality where practical.
+- Define a stable main application entry point that can be called from both the example launcher and normal application startup.
 - Preserve source media. Any future export must write new files and must use the calculated common interval for both clips.
 - Use a media playback approach that supports both video and audio and handles differing frame rates, stream timestamps, and audio sample rates. Keep playback position and offset calculations based on media timestamps rather than assuming both videos have identical frame rates.
 - Use precise internal time values (for example, integer stream time-base ticks or rational values where practical). Round only for display or when an export format requires frame boundaries. Explain any frame-boundary rounding in the result.
