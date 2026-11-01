@@ -1,4 +1,4 @@
-"""Launch the Video Stitcher from the repository root with ``python Test/example.py``."""
+"""Launch the Video Stitcher with ``python Workflow/Step02ApplyTimeOffset.py``."""
 
 import sys
 from pathlib import Path

@@ -196,10 +196,13 @@ class VideoStitcherApp:
             self.status.configure(text="CameraBOffset_s is invalid; using 0 seconds.")
 
         missing_paths = []
-        for index, key in enumerate(("CameraAVideoFilePath", "CameraBVideoFilePath")):
-            raw_path = str(settings.get(key, "")).strip()
+        for index, camera_key in enumerate(("CameraA", "CameraB")):
+            camera_settings = settings.get(camera_key, {})
+            if not isinstance(camera_settings, dict):
+                camera_settings = {}
+            raw_path = str(camera_settings.get("CombinedVideoFilePath", "")).strip()
             if not raw_path:
-                missing_paths.append(key)
+                missing_paths.append(f"{camera_key}.CombinedVideoFilePath")
                 continue
             path = Path(raw_path).expanduser()
             if not path.is_absolute():
@@ -415,8 +418,7 @@ class VideoStitcherApp:
         self.status.configure(text=f"Saved signed offset {_seconds(self.offset)} seconds to settings.json.")
 
     def start_export(self) -> None:
-        media_a, media_b = self.media
-        if not media_a or not media_b:
+        if not all(self.media):
             messagebox.showinfo("Choose two videos", "Both videos must be loaded before creating aligned clips.", parent=self.root)
             return
         try:
@@ -427,15 +429,30 @@ class VideoStitcherApp:
             scenario = str(settings.get("ScenarioName", "")).strip()
             if not scenario:
                 raise ValueError("Set ScenarioName in settings.json before exporting.")
+            configured_media = []
+            for camera_key in ("CameraA", "CameraB"):
+                camera_settings = settings.get(camera_key, {})
+                if not isinstance(camera_settings, dict):
+                    camera_settings = {}
+                raw_path = str(camera_settings.get("CombinedVideoFilePath", "")).strip()
+                if not raw_path:
+                    raise ValueError(f"Set {camera_key}.CombinedVideoFilePath in settings.json before exporting.")
+                source_path = Path(raw_path).expanduser()
+                if not source_path.is_absolute():
+                    source_path = SETTINGS_PATH.parent / source_path
+                configured_media.append(probe(source_path))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             messagebox.showerror("Could not start export", str(exc), parent=self.root)
+            return
+        except Exception as exc:
+            messagebox.showerror("Could not open configured source videos", str(exc), parent=self.root)
             return
 
         output_dir = SETTINGS_PATH.parent / "Results" / "Step01_AlignedVideos"
         self.stop_playback()
         self.export_in_progress = True
         self._update_export_button()
-        self.status.configure(text="Preparing aligned clip exports…")
+        self.status.configure(text="Preparing full-length aligned clip exports from the configured source files…")
 
         def report_progress(text: str) -> None:
             try:
@@ -444,7 +461,7 @@ class VideoStitcherApp:
                 pass
 
         future = self.export_executor.submit(
-            export_aligned_pair, media_a, media_b, self.offset, scenario, output_dir, report_progress
+            export_aligned_pair, configured_media[0], configured_media[1], self.offset, scenario, output_dir, report_progress
         )
 
         def export_done(completed) -> None:

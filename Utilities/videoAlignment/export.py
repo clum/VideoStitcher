@@ -63,21 +63,19 @@ def export_aligned_pair(
 ) -> tuple[Path, Path, Fraction]:
     """Export A and B trimmed to their common interval, with matching frame counts."""
     ffmpeg, _, _ = require_tools()
-    alignment = calculate_alignment(media_a.duration, media_b.duration, offset)
+    # The UI intentionally limits manual review to the first 30 seconds, while
+    # export uses each source file's complete duration.
+    duration_a = media_a.source_duration
+    duration_b = media_b.source_duration
+    alignment = calculate_alignment(duration_a, duration_b, offset)
     if not alignment.overlap_exists:
         raise ValueError("The selected offset leaves no shared interval to export.")
-    trims = alignment.trims(media_a.duration, media_b.duration)
+    trims = alignment.trims(duration_a, duration_b)
 
     prefix = _scenario_prefix(scenario_name)
     output_dir.mkdir(parents=True, exist_ok=True)
-    suffix = 1
-    while True:
-        tag = "" if suffix == 1 else f"_{suffix:02d}"
-        path_a = output_dir / f"{prefix}{tag}_CameraA_Aligned.mp4"
-        path_b = output_dir / f"{prefix}{tag}_CameraB_Aligned.mp4"
-        if not path_a.exists() and not path_b.exists():
-            break
-        suffix += 1
+    path_a = output_dir / f"{prefix}_CameraA_Aligned.mp4"
+    path_b = output_dir / f"{prefix}_CameraB_Aligned.mp4"
 
     frame_rate = _output_frame_rate(media_a)
     frame_count = max(1, int(alignment.duration * frame_rate + Fraction(1, 2)))
@@ -85,6 +83,7 @@ def export_aligned_pair(
     token = uuid.uuid4().hex
     temp_a = output_dir / f".{token}_CameraA.mp4"
     temp_b = output_dir / f".{token}_CameraB.mp4"
+    backups: dict[Path, Path] = {}
     promoted: list[Path] = []
     try:
         for media, trim_start, temp_path, label in (
@@ -109,19 +108,40 @@ def export_aligned_pair(
                 "FFmpeg produced different video durations for the pair "
                 f"({float(output_info_a.source_duration):.6f}s and {float(output_info_b.source_duration):.6f}s)."
             )
-        if path_a.exists() or path_b.exists():
-            raise FileExistsError("An output file appeared during export. No existing file was overwritten.")
+        # Preserve the old pair until both replacement files are ready. If a
+        # replacement fails partway through, restore any previous outputs.
+        for final_path in (path_a, path_b):
+            if final_path.exists():
+                backup_path = output_dir / f".{token}_{final_path.name}.backup"
+                final_path.replace(backup_path)
+                backups[final_path] = backup_path
         temp_a.replace(path_a)
         promoted.append(path_a)
         temp_b.replace(path_b)
         promoted.append(path_b)
+        for backup_path in backups.values():
+            try:
+                backup_path.unlink(missing_ok=True)
+            except OSError:
+                # A leftover backup is safer than undoing a successfully
+                # published pair when cleanup is blocked by the filesystem.
+                pass
         if progress:
             progress("Aligned clips exported.")
         return path_a, path_b, output_info_a.source_duration
-    except Exception:
+    except Exception as export_error:
         for path in (temp_a, temp_b, *promoted):
             try:
                 path.unlink(missing_ok=True)
             except OSError:
                 pass
+        rollback_errors = []
+        for final_path, backup_path in backups.items():
+            try:
+                if backup_path.exists():
+                    backup_path.replace(final_path)
+            except OSError as exc:
+                rollback_errors.append(f"Could not restore {final_path.name}: {exc}")
+        if rollback_errors:
+            raise RuntimeError(f"{export_error} {'; '.join(rollback_errors)}") from export_error
         raise

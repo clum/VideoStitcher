@@ -1,6 +1,41 @@
 {
-  "ScenarioName": "26_10_30_Test",
-  "CameraAVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraA.MP4",
-  "CameraBVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraB.MP4",
-  "CameraBOffset_s": -0.02862541112678711
+  "ScenarioName": "26_10_31_Mukilteo",
+  "CameraA": {
+    "RawVideoFilePath": null,
+    "CombinedVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraA.MP4",
+    "CameraModel": null,
+    "ResolutionHorizontal_px": 1920,
+    "ResolutionVertical_px": 1080,
+    "FPS": 59.94005994,
+    "FieldOfView": null,
+    "LowLight": null,
+    "SpotMeter": null,
+    "Protune": null,
+    "WhiteBalance": null,
+    "Color": null,
+    "Shutter": null,
+    "IsoLimit": null,
+    "Sharpness": null,
+    "EvCompensation": null
+  },
+  "CameraB": {
+    "RawVideoFilePath": null,
+    "CombinedVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraB.MP4",
+    "CameraModel": null,
+    "ResolutionHorizontal_px": 1920,
+    "ResolutionVertical_px": 1080,
+    "FPS": 59.94005994,
+    "FieldOfView": null,
+    "LowLight": null,
+    "SpotMeter": null,
+    "Protune": null,
+    "WhiteBalance": null,
+    "Color": null,
+    "Shutter": null,
+    "IsoLimit": null,
+    "Sharpness": null,
+    "EvCompensation": null
+  },
+  "CameraBOffset_s": -0.02862541112678711,
+  "CameraBOffset_deg": 85
 }
