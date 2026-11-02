@@ -1,6 +1,5 @@
 """Create equal-duration aligned MP4 outputs with FFmpeg."""
 
-import re
 import subprocess
 import uuid
 from fractions import Fraction
@@ -9,6 +8,21 @@ from typing import Callable
 
 from .alignment import calculate_alignment
 from .media import MediaInfo, probe, require_tools
+from .workflow_paths import scenario_prefix
+
+
+_FFMPEG_PROGRESS_KEYS = {
+    "frame", "fps", "stream_0_0_q", "bitrate", "total_size", "out_time_us",
+    "out_time_ms", "out_time", "dup_frames", "drop_frames", "speed", "progress",
+}
+
+
+def _log_tail(path: Path, max_chars: int = 4000) -> str:
+    try:
+        contents = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as exc:
+        return f"Could not read FFmpeg log ({exc})."
+    return contents[-max_chars:] if contents else "FFmpeg did not write diagnostic output."
 
 
 def _output_frame_rate(media: MediaInfo) -> Fraction:
@@ -17,13 +31,6 @@ def _output_frame_rate(media: MediaInfo) -> Fraction:
         return rate if rate > 0 else Fraction(30)
     except (ValueError, ZeroDivisionError):
         return Fraction(30)
-
-
-def _scenario_prefix(scenario_name: str) -> str:
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", scenario_name).strip(" ._")
-    if not safe:
-        raise ValueError("Set a valid ScenarioName in settings.json before exporting.")
-    return safe
 
 
 def _ffmpeg_command(
@@ -59,7 +66,7 @@ def export_aligned_pair(
     offset: Fraction,
     scenario_name: str,
     output_dir: Path,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> tuple[Path, Path, Fraction]:
     """Export A and B trimmed to their common interval, with matching frame counts."""
     ffmpeg, _, _ = require_tools()
@@ -72,7 +79,7 @@ def export_aligned_pair(
         raise ValueError("The selected offset leaves no shared interval to export.")
     trims = alignment.trims(duration_a, duration_b)
 
-    prefix = _scenario_prefix(scenario_name)
+    prefix = scenario_prefix(scenario_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     path_a = output_dir / f"{prefix}_CameraA_Aligned.mp4"
     path_b = output_dir / f"{prefix}_CameraB_Aligned.mp4"
@@ -83,21 +90,68 @@ def export_aligned_pair(
     token = uuid.uuid4().hex
     temp_a = output_dir / f".{token}_CameraA.mp4"
     temp_b = output_dir / f".{token}_CameraB.mp4"
+    log_paths: list[Path] = []
     backups: dict[Path, Path] = {}
     promoted: list[Path] = []
     try:
-        for media, trim_start, temp_path, label in (
+        for index, (media, trim_start, temp_path, label) in enumerate((
             (media_a, trims["a_start"], temp_a, "A"),
             (media_b, trims["b_start"], temp_b, "B"),
-        ):
+        )):
             if progress:
-                progress(f"Encoding camera {label}…")
-            result = subprocess.run(
-                _ffmpeg_command(ffmpeg, media, trim_start, frame_rate, frame_count, target_duration, temp_path),
-                capture_output=True, text=True, check=False,
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or f"FFmpeg failed while exporting camera {label}.")
+                progress(index * 47.5, f"Encoding camera {label} ({index + 1} of 2)…")
+            command = _ffmpeg_command(ffmpeg, media, trim_start, frame_rate, frame_count, target_duration, temp_path)
+            command[1:1] = ["-nostats", "-stats_period", "0.5", "-progress", "pipe:1"]
+            log_path = output_dir / f"{prefix}_Camera{label}_FFmpeg_{token[:8]}.log"
+            log_paths.append(log_path)
+            with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
+                log_file.write(
+                    f"Source: {media.path}\nOutput: {temp_path}\n"
+                    f"Command: {subprocess.list2cmdline(command)}\n\n"
+                )
+                log_file.flush()
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=log_file,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                assert process.stdout is not None
+                for line in process.stdout:
+                    line = line.strip()
+                    if "=" not in line:
+                        if line:
+                            log_file.write(f"FFmpeg stdout: {line}\n")
+                            log_file.flush()
+                        continue
+                    key, value = line.split("=", 1)
+                    if key not in _FFMPEG_PROGRESS_KEYS:
+                        log_file.write(f"FFmpeg stdout: {line}\n")
+                        log_file.flush()
+                    if key in {"out_time_us", "out_time_ms"}:
+                        try:
+                            encoded_seconds = int(value) / 1_000_000
+                        except ValueError:
+                            continue
+                        camera_fraction = min(1.0, max(0.0, encoded_seconds / float(target_duration)))
+                        overall_percent = ((index + camera_fraction) / 2) * 95.0
+                        if progress:
+                            progress(overall_percent, f"Encoding camera {label} ({index + 1} of 2)...")
+            return_code = process.wait()
+            if return_code or not temp_path.is_file() or temp_path.stat().st_size == 0:
+                reason = (
+                    f"FFmpeg failed while exporting camera {label} (exit code {return_code}).\n"
+                    f"Full FFmpeg log: {log_path}\n\nLast FFmpeg output:\n{_log_tail(log_path)}"
+                )
+                raise RuntimeError(reason)
+            if progress:
+                progress((index + 1) * 47.5, f"Camera {label} encoding complete; preparing next stage…")
+
+        if progress:
+            progress(95.0, "Checking that both encoded clips have the same duration…")
 
         # Both videos use the same output frame rate and frame count. Confirm the
         # encoded video stream durations before publishing either final filename.
@@ -108,6 +162,8 @@ def export_aligned_pair(
                 "FFmpeg produced different video durations for the pair "
                 f"({float(output_info_a.source_duration):.6f}s and {float(output_info_b.source_duration):.6f}s)."
             )
+        if progress:
+            progress(98.0, "Publishing the aligned video pair…")
         # Preserve the old pair until both replacement files are ready. If a
         # replacement fails partway through, restore any previous outputs.
         for final_path in (path_a, path_b):
@@ -126,8 +182,13 @@ def export_aligned_pair(
                 # A leftover backup is safer than undoing a successfully
                 # published pair when cleanup is blocked by the filesystem.
                 pass
+        for log_path in log_paths:
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         if progress:
-            progress("Aligned clips exported.")
+            progress(100.0, "Aligned clips created.")
         return path_a, path_b, output_info_a.source_duration
     except Exception as export_error:
         for path in (temp_a, temp_b, *promoted):
@@ -144,4 +205,10 @@ def export_aligned_pair(
                 rollback_errors.append(f"Could not restore {final_path.name}: {exc}")
         if rollback_errors:
             raise RuntimeError(f"{export_error} {'; '.join(rollback_errors)}") from export_error
+        if log_paths and "Full FFmpeg log:" not in str(export_error):
+            retained_logs = "\n".join(f"- {path}" for path in log_paths if path.exists())
+            if retained_logs:
+                raise RuntimeError(
+                    f"{export_error}\nFFmpeg logs retained for this failed run:\n{retained_logs}"
+                ) from export_error
         raise

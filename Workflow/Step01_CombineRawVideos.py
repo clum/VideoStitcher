@@ -22,7 +22,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_PATH = ROOT / "settings.json"
-OUTPUT_DIR = ROOT / "Results" / "Step01_CombinedVideos"
+sys.path.insert(0, str(ROOT / "Utilities"))
+from videoAlignment.workflow_paths import results_directory, scenario_prefix
+
 VIDEO_EXTENSIONS = {
     ".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm", ".mts", ".m2ts",
 }
@@ -86,13 +88,6 @@ def _load_settings() -> dict[str, Any]:
     if not isinstance(scenario, str) or not scenario.strip():
         raise WorkflowError("Set a non-empty ScenarioName in settings.json.")
     return settings
-
-
-def _scenario_prefix(scenario: str) -> str:
-    prefix = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", scenario).strip(" ._")
-    if not prefix:
-        raise WorkflowError("ScenarioName does not contain any valid filename characters.")
-    return prefix
 
 
 def _video_files(folder: Path, camera: str) -> list[Path]:
@@ -282,7 +277,11 @@ def _publish_pair(staged: list[Path], destinations: list[Path], backup_dir: Path
 
 def run() -> tuple[Path, Path]:
     settings = _load_settings()
-    prefix = _scenario_prefix(settings["ScenarioName"].strip())
+    try:
+        prefix = scenario_prefix(settings["ScenarioName"].strip())
+        output_dir = results_directory(settings, ROOT) / "Step01_CombinedVideos"
+    except ValueError as exc:
+        raise WorkflowError(str(exc)) from exc
     camera_inputs: list[list[Path]] = []
     for camera in ("CameraA", "CameraB"):
         camera_settings = settings.get(camera)
@@ -294,7 +293,7 @@ def run() -> tuple[Path, Path]:
         folder = Path(raw_folder).expanduser()
         if not folder.is_absolute():
             folder = ROOT / folder
-        if folder.resolve() == OUTPUT_DIR.resolve():
+        if folder.resolve() == output_dir.resolve():
             raise WorkflowError(f"{camera}.RawVideoFilePath cannot be the Step01_CombinedVideos output folder.")
         camera_inputs.append(_video_files(folder, camera))
 
@@ -304,19 +303,19 @@ def run() -> tuple[Path, Path]:
     if missing_tools:
         raise WorkflowError("Required FFmpeg tools are not on PATH: " + ", ".join(missing_tools))
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     durations_by_camera = [
         [_duration_seconds(ffprobe, path) for path in files]
         for files in camera_inputs
     ]
     progress = TerminalProgress(sum(sum(durations) for durations in durations_by_camera))
     destinations = [
-        OUTPUT_DIR / f"{prefix}_CameraA{camera_inputs[0][0].suffix}",
-        OUTPUT_DIR / f"{prefix}_CameraB{camera_inputs[1][0].suffix}",
+        output_dir / f"{prefix}_CameraA{camera_inputs[0][0].suffix}",
+        output_dir / f"{prefix}_CameraB{camera_inputs[1][0].suffix}",
     ]
 
     try:
-        with tempfile.TemporaryDirectory(prefix=".step01_", dir=OUTPUT_DIR) as temporary:
+        with tempfile.TemporaryDirectory(prefix=".step01_", dir=output_dir) as temporary:
             temp_dir = Path(temporary)
             staged = [
                 _combine_one(ffmpeg, ffprobe, "CameraA", camera_inputs[0], temp_dir, durations_by_camera[0], progress),

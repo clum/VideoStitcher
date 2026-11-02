@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from .alignment import Alignment, calculate_alignment
 from .export import export_aligned_pair
 from .media import MediaInfo, audio_peaks, frame_png, probe, require_tools
+from .workflow_paths import combined_video_path, results_directory
 
 SETTINGS_PATH = Path(__file__).resolve().parents[2] / "settings.json"
 
@@ -56,11 +57,17 @@ class VideoStitcherApp:
     def _build_ui(self) -> None:
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill="x")
-        ttk.Button(top, text="Change reference video…", command=lambda: self.choose(0)).pack(side="left")
-        ttk.Button(top, text="Change second video…", command=lambda: self.choose(1)).pack(side="left", padx=(8, 0))
-        self.file_labels = [ttk.Label(top, text="Reference: not selected"), ttk.Label(top, text="Second: not selected")]
-        self.file_labels[0].pack(side="left", padx=(16, 0))
-        self.file_labels[1].pack(side="left", padx=(12, 0))
+        buttons = ttk.Frame(top)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Change reference video…", command=lambda: self.choose(0)).pack(side="left")
+        ttk.Button(buttons, text="Change second video…", command=lambda: self.choose(1)).pack(side="left", padx=(8, 0))
+        self.file_labels = [
+            ttk.Label(top, text="Reference: not loaded", justify="left", anchor="w"),
+            ttk.Label(top, text="Second: not loaded", justify="left", anchor="w"),
+        ]
+        for path_label in self.file_labels:
+            path_label.pack(fill="x", anchor="w", pady=(4, 0))
+        self.root.bind("<Configure>", self._resize_file_path_labels)
 
         previews = ttk.Frame(self.root, padding=(10, 0, 10, 4))
         previews.pack(fill="x")
@@ -124,8 +131,21 @@ class VideoStitcherApp:
         self.save_offset_button.pack(anchor="e", pady=(4, 0))
         self.export_button = ttk.Button(align_frame, text="Create aligned clips", command=self.start_export, state="disabled")
         self.export_button.pack(anchor="e", pady=(4, 0))
+        self.export_progress_text = ttk.Label(align_frame, text="Export idle")
+        self.export_progress_text.pack(anchor="w", pady=(6, 2))
+        self.export_progress_var = tk.DoubleVar(value=0.0)
+        self.export_progressbar = ttk.Progressbar(
+            align_frame, mode="determinate", maximum=100, variable=self.export_progress_var
+        )
+        self.export_progressbar.pack(fill="x", pady=(0, 2))
         self.status = ttk.Label(self.root, text="Ready. FFmpeg, ffprobe, and ffplay must be available on PATH.", padding=(10, 4))
         self.status.pack(fill="x", side="bottom")
+
+    def _resize_file_path_labels(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            wrap_length = max(400, event.width - 40)
+            for path_label in self.file_labels:
+                path_label.configure(wraplength=wrap_length)
 
     def choose(self, index: int) -> None:
         path = filedialog.askopenfilename(title="Select video", filetypes=[("Video files", "*.mp4 *.mov *.mkv *.avi *.m4v *.webm *.mts *.m2ts"), ("All files", "*.*")])
@@ -141,7 +161,7 @@ class VideoStitcherApp:
     def _set_media(self, index: int, info: MediaInfo, refresh: bool = True, reset_offset: bool = True) -> None:
         self.media[index] = info
         self.waveforms[index] = None
-        self.file_labels[index].configure(text=f"{'Reference' if index == 0 else 'Second'}: {info.path.name}")
+        self.file_labels[index].configure(text=f"{'Reference' if index == 0 else 'Second'}: {info.path}")
         rate = info.frame_rate or "unknown"
         self.info_labels[index].configure(text=(
             f"{info.width}×{info.height} · first {float(info.duration):.3f} s of {float(info.source_duration):.3f} s"
@@ -195,28 +215,17 @@ class VideoStitcherApp:
             self.offset = Fraction(0)
             self.status.configure(text="CameraBOffset_s is invalid; using 0 seconds.")
 
-        missing_paths = []
         for index, camera_key in enumerate(("CameraA", "CameraB")):
-            camera_settings = settings.get(camera_key, {})
-            if not isinstance(camera_settings, dict):
-                camera_settings = {}
-            raw_path = str(camera_settings.get("CombinedVideoFilePath", "")).strip()
-            if not raw_path:
-                missing_paths.append(f"{camera_key}.CombinedVideoFilePath")
-                continue
-            path = Path(raw_path).expanduser()
-            if not path.is_absolute():
-                path = SETTINGS_PATH.parent / path
             try:
+                path = combined_video_path(settings, camera_key, SETTINGS_PATH.parent)
                 info = probe(path)
             except Exception as exc:
+                self.status.configure(text=f"Could not load {camera_key} combined video: {exc}")
                 messagebox.showerror(f"Could not open {'reference' if index == 0 else 'second'} video", str(exc), parent=self.root)
                 continue
             self._set_media(index, info, refresh=False, reset_offset=False)
 
         self.refresh()
-        if missing_paths:
-            self.status.configure(text="Set " + " and ".join(missing_paths) + " in settings.json, or use the Change video buttons.")
 
     def duration(self, index: int) -> Fraction:
         info = self.media[index]
@@ -421,6 +430,11 @@ class VideoStitcherApp:
         if not all(self.media):
             messagebox.showinfo("Choose two videos", "Both videos must be loaded before creating aligned clips.", parent=self.root)
             return
+        self.export_in_progress = True
+        self._update_export_button()
+        self.export_progress_var.set(0.0)
+        self.export_progress_text.configure(text="Preparing aligned clip export…")
+        self.status.configure(text="Preparing full-length aligned clip exports from the configured source files…")
         try:
             with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
                 settings = json.load(settings_file)
@@ -429,34 +443,34 @@ class VideoStitcherApp:
             scenario = str(settings.get("ScenarioName", "")).strip()
             if not scenario:
                 raise ValueError("Set ScenarioName in settings.json before exporting.")
-            configured_media = []
-            for camera_key in ("CameraA", "CameraB"):
-                camera_settings = settings.get(camera_key, {})
-                if not isinstance(camera_settings, dict):
-                    camera_settings = {}
-                raw_path = str(camera_settings.get("CombinedVideoFilePath", "")).strip()
-                if not raw_path:
-                    raise ValueError(f"Set {camera_key}.CombinedVideoFilePath in settings.json before exporting.")
-                source_path = Path(raw_path).expanduser()
-                if not source_path.is_absolute():
-                    source_path = SETTINGS_PATH.parent / source_path
-                configured_media.append(probe(source_path))
+            configured_media = [
+                probe(combined_video_path(settings, camera, SETTINGS_PATH.parent))
+                for camera in ("CameraA", "CameraB")
+            ]
+            output_dir = results_directory(settings, SETTINGS_PATH.parent) / "Step02_AlignedVideos"
         except (OSError, json.JSONDecodeError, ValueError) as exc:
+            self.export_in_progress = False
+            self._update_export_button()
+            self.export_progress_text.configure(text="Export could not start")
             messagebox.showerror("Could not start export", str(exc), parent=self.root)
             return
         except Exception as exc:
+            self.export_in_progress = False
+            self._update_export_button()
+            self.export_progress_text.configure(text="Export could not start")
             messagebox.showerror("Could not open configured source videos", str(exc), parent=self.root)
             return
 
-        output_dir = SETTINGS_PATH.parent / "Results" / "Step01_AlignedVideos"
         self.stop_playback()
-        self.export_in_progress = True
-        self._update_export_button()
-        self.status.configure(text="Preparing full-length aligned clip exports from the configured source files…")
 
-        def report_progress(text: str) -> None:
+        def report_progress(percent: float, text: str) -> None:
             try:
-                self.root.after(0, lambda: self.status.configure(text=text))
+                def update_progress() -> None:
+                    self.export_progress_var.set(max(0.0, min(100.0, percent)))
+                    self.export_progress_text.configure(text=f"{percent:5.1f}% · {text}")
+                    self.status.configure(text=text)
+
+                self.root.after(0, update_progress)
             except tk.TclError:
                 pass
 
@@ -479,8 +493,13 @@ class VideoStitcherApp:
             path_a, path_b, duration = future.result()
         except Exception as exc:
             self.status.configure(text=f"Aligned clip export failed: {exc}")
+            self.export_progress_text.configure(
+                text=f"{self.export_progress_var.get():5.1f}% · Export failed"
+            )
             messagebox.showerror("Export failed", str(exc), parent=self.root)
             return
+        self.export_progress_var.set(100.0)
+        self.export_progress_text.configure(text="100.0% · Export complete")
         self.status.configure(text=f"Created equal-duration aligned clips ({float(duration):.6f} s).")
         messagebox.showinfo(
             "Aligned clips created",
