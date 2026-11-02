@@ -31,9 +31,10 @@ Build a Python desktop application that helps a user manually align two recordin
 ## Product and implementation guidance
 
 - Keep the interface focused on selecting two files, comparing synchronized playback, adjusting the second clip, and reading the resulting offset and trims.
+- Provide `Workflow/Step01_CombineRawVideos.py` to combine the supported video files directly inside each camera's `RawVideoFilePath` folder. Order by modification time oldest-first, using natural filename order for ties; stream-copy video and audio while omitting unsupported ancillary camera data streams, and preserve the source extension. Stage both `{ScenarioName}_CameraA` and `{ScenarioName}_CameraB` outputs before replacing the fixed pair in `Results/Step01_CombinedVideos/`.
 - Keep the Step 02 launcher at `Workflow/Step02ApplyTimeOffset.py`; it invokes the main application entry point.
 - Encapsulate application behavior in callable Python scripts, functions, classes, and/or libraries. Store this code under `Utilities/` in an organized package structure, with the user interface calling reusable functionality where practical.
-- Define a stable main application entry point that can be called from both the example launcher and normal application startup.
+- Define a stable main application entry point that can be called from the Step 02 launcher and normal application startup.
 - Preserve source media. Export must write new files and must use the calculated common interval for both clips.
 - Use a media playback approach that supports both video and audio and handles differing frame rates, stream timestamps, and audio sample rates. Keep playback position and offset calculations based on media timestamps rather than assuming both videos have identical frame rates.
 - Visualize audio as an amplitude waveform on each clip's timeline row; do not represent audio only with a dashed line. Build the waveform from the active first-30-second window and keep it attached to its video when the second clip moves.

@@ -1,7 +1,7 @@
 {
   "ScenarioName": "26_10_31_Mukilteo",
   "CameraA": {
-    "RawVideoFilePath": null,
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\ModelsAndResults\\26_10_31\\CameraA",
     "CombinedVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraA.MP4",
     "CameraModel": null,
     "ResolutionHorizontal_px": 1920,
@@ -19,7 +19,7 @@
     "EvCompensation": null
   },
   "CameraB": {
-    "RawVideoFilePath": null,
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\ModelsAndResults\\26_10_31\\CameraB",
     "CombinedVideoFilePath": "C:\\GitHub\\VideoStitcher\\Test\\Soccer\\26_10_30_CameraB.MP4",
     "CameraModel": null,
     "ResolutionHorizontal_px": 1920,
