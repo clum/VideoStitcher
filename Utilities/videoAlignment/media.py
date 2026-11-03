@@ -40,7 +40,7 @@ def probe(path: str | Path) -> MediaInfo:
     if not media_path.is_file():
         raise FileNotFoundError(f"File not found: {media_path}")
     result = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate,duration", "-of", "json", str(media_path)],
+        [ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate,r_frame_rate,duration", "-of", "json", str(media_path)],
         capture_output=True, text=True, check=False,
     )
     if result.returncode:
@@ -59,7 +59,7 @@ def probe(path: str | Path) -> MediaInfo:
         media_path, min(duration, MAX_CLIP_SECONDS), duration,
         int(video["width"]) if video.get("width") else None,
         int(video["height"]) if video.get("height") else None,
-        video.get("avg_frame_rate"),
+        video.get("r_frame_rate") or video.get("avg_frame_rate"),
         any(s.get("codec_type") == "audio" for s in streams),
     )
 

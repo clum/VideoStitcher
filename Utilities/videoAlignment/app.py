@@ -490,7 +490,7 @@ class VideoStitcherApp:
         self.export_in_progress = False
         self._update_export_button()
         try:
-            path_a, path_b, duration = future.result()
+            path_a, path_b, duration_a, duration_b = future.result()
         except Exception as exc:
             self.status.configure(text=f"Aligned clip export failed: {exc}")
             self.export_progress_text.configure(
@@ -500,10 +500,19 @@ class VideoStitcherApp:
             return
         self.export_progress_var.set(100.0)
         self.export_progress_text.configure(text="100.0% · Export complete")
-        self.status.configure(text=f"Created equal-duration aligned clips ({float(duration):.6f} s).")
+        duration_difference = abs(duration_a - duration_b)
+        self.status.configure(
+            text=(
+                f"Created aligned clips: Camera A {float(duration_a):.6f} s; "
+                f"Camera B {float(duration_b):.6f} s; difference {float(duration_difference):.6f} s."
+            )
+        )
         messagebox.showinfo(
             "Aligned clips created",
-            f"Camera A: {path_a}\nCamera B: {path_b}\n\nBoth clips are {float(duration):.6f} seconds long.",
+            f"Camera A: {path_a}\nCamera B: {path_b}\n\n"
+            f"Camera A duration: {float(duration_a):.6f} seconds\n"
+            f"Camera B duration: {float(duration_b):.6f} seconds\n"
+            f"Duration difference: {float(duration_difference):.6f} seconds (maximum allowed: 1.000000 second).",
             parent=self.root,
         )
 

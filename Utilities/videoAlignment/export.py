@@ -1,4 +1,4 @@
-"""Create equal-duration aligned MP4 outputs with FFmpeg."""
+"""Create aligned MP4 outputs with FFmpeg and validate their duration tolerance."""
 
 import subprocess
 import uuid
@@ -56,7 +56,7 @@ def _ffmpeg_command(
             "-af", f"apad=pad_dur={duration},atrim=duration={duration},asetpts=PTS-STARTPTS",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         ]
-    cmd += ["-movflags", "+faststart", str(output_path)]
+    cmd += ["-video_track_timescale", "60000", "-movflags", "+faststart", str(output_path)]
     return cmd
 
 
@@ -67,8 +67,8 @@ def export_aligned_pair(
     scenario_name: str,
     output_dir: Path,
     progress: Callable[[float, str], None] | None = None,
-) -> tuple[Path, Path, Fraction]:
-    """Export A and B trimmed to their common interval, with matching frame counts."""
+) -> tuple[Path, Path, Fraction, Fraction]:
+    """Export A and B trimmed to their common interval, allowing a 1 s duration tolerance."""
     ffmpeg, _, _ = require_tools()
     # The UI intentionally limits manual review to the first 30 seconds, while
     # export uses each source file's complete duration.
@@ -151,16 +151,19 @@ def export_aligned_pair(
                 progress((index + 1) * 47.5, f"Camera {label} encoding complete; preparing next stage…")
 
         if progress:
-            progress(95.0, "Checking that both encoded clips have the same duration…")
+            progress(95.0, "Checking final clip durations (maximum difference: 1 second)...")
 
         # Both videos use the same output frame rate and frame count. Confirm the
         # encoded video stream durations before publishing either final filename.
         output_info_a = probe(temp_a)
         output_info_b = probe(temp_b)
-        if output_info_a.source_duration != output_info_b.source_duration:
+        duration_difference = abs(output_info_a.source_duration - output_info_b.source_duration)
+        if duration_difference > 1:
             raise RuntimeError(
-                "FFmpeg produced different video durations for the pair "
-                f"({float(output_info_a.source_duration):.6f}s and {float(output_info_b.source_duration):.6f}s)."
+                "FFmpeg produced clips whose durations differ by more than 1 second "
+                f"({float(output_info_a.source_duration):.6f}s and "
+                f"{float(output_info_b.source_duration):.6f}s; difference "
+                f"{float(duration_difference):.6f}s)."
             )
         if progress:
             progress(98.0, "Publishing the aligned video pair…")
@@ -189,7 +192,7 @@ def export_aligned_pair(
                 pass
         if progress:
             progress(100.0, "Aligned clips created.")
-        return path_a, path_b, output_info_a.source_duration
+        return path_a, path_b, output_info_a.source_duration, output_info_b.source_duration
     except Exception as export_error:
         for path in (temp_a, temp_b, *promoted):
             try:
