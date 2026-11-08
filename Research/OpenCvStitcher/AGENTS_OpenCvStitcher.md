@@ -10,7 +10,7 @@ Use OpenCV to estimate a perspective transform from manually matched landmarks, 
 - Default corresponding landmarks are in `POINTS_LEFT` and `POINTS_RIGHT` near the top of `stitch_two_images.py`. Replace them with coordinates from the selected image pair. The two lists must use the same point order.
 - Each coordinate is `(x, y)` in pixels from that image's top-left corner. The script validates that there are at least four pairs, both lists have equal lengths, and all points are in their respective image bounds.
 - Output files are `warped_right.jpg` and `alignment_preview.jpg` in `Research/OpenCvStitcher/` by default. The preview window shows the left frame, warped right frame, and equal-weight blend.
-- The output canvas has the left image's dimensions. Warped content outside that canvas is clipped.
+- `warped_right.jpg` contains the complete transformed right image cropped to its own projected bounds. `alignment_preview.jpg` uses a shared canvas large enough to contain both the full left image and all projected corners of the transformed right image; it places the left image on the left and the complete warped right image beside it.
 - Original images are read only.
 
 ## Run
@@ -34,13 +34,14 @@ The script prints the homography matrix and RANSAC inlier count, saves both outp
 1. Load both frames in color with OpenCV.
 2. Identify at least four corresponding visual landmarks and enter them in matching order in `POINTS_LEFT` and `POINTS_RIGHT`.
 3. Call `cv2.findHomography(POINTS_RIGHT, POINTS_LEFT, cv2.RANSAC, 5.0)` to estimate a transform that maps right-image coordinates into the left image.
-4. Warp the right image with `cv2.warpPerspective` to the left image's width and height.
-5. Blend the left and warped-right images at equal weights with `cv2.addWeighted`, save both images, and inspect the preview for alignment errors.
+4. Check whether the homography's projective horizon crosses the right image. If it does, estimate a robust similarity transform from the point pairs for rendering; a horizon-crossing homography folds the full image into disjoint regions. The homography and its inlier count remain printed for diagnostics.
+5. Project the right image's corners through the rendering transform, compute the union bounds with the left image, and translate the transform so both images fit on a positive-coordinate canvas.
+6. Warp the full right image to that canvas. Save it as `warped_right.jpg`; the black area represents locations outside the transformed right image. Build `alignment_preview.jpg` on the same canvas, keeping single-image regions unchanged and blending only the overlap.
 
 ## Practical notes
 
 - Choose distinctive landmarks spread across the shared area. Avoid points that are ambiguous, moving, or nearly on one line.
 - Keep corresponding points in exactly the same order. A wrong pair can distort the estimated transform; RANSAC may reject outliers, but it cannot repair incorrect matches generally.
 - A homography approximates a planar scene or camera rotation. Parallax from nearby objects can leave some regions misaligned even when the chosen points match.
-- The blend is a quick alignment check. Equal-weight blending can ghost edges and darken areas where the warped image has no content.
-- If the output needs to contain all of both images, compute a larger output canvas and translation before warping; this example intentionally uses the left frame's dimensions.
+- The overlap blend is a quick alignment check and can ghost edges when corresponding pixels do not align.
+- Extreme or incorrect landmark geometry can project corners very far away or near the homography horizon. The script uses a similarity transform for a full-frame render when the horizon crosses the image, and rejects non-finite or excessively large output canvases. Inspect the point pairs if the similarity fallback has fewer than four inliers or the canvas is still unreasonable.

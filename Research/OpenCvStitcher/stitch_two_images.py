@@ -127,9 +127,107 @@ def main() -> int:
     print("Homography matrix:\n", homography)
     print(f"Inliers: {inlier_count} of {len(POINTS_LEFT)}")
 
-    height, width = left.shape[:2]
-    warped_right = cv2.warpPerspective(right, homography, (width, height))
-    preview = cv2.addWeighted(left, 0.5, warped_right, 0.5, 0)
+    left_height, left_width = left.shape[:2]
+    right_height, right_width = right.shape[:2]
+
+    # A homography can map a line inside the source frame to infinity. When
+    # that projective horizon crosses the right image, the full-frame warp
+    # folds into disconnected pieces. This often happens when landmarks only
+    # cover a narrow overlap region. Use a robust similarity transform for
+    # rendering in that case; retain the homography above for diagnostics.
+    right_corners = np.float32(
+        [[0, 0], [right_width, 0], [right_width, right_height], [0, right_height]]
+    ).reshape(-1, 1, 2)
+    corner_denominators = np.c_[right_corners.reshape(-1, 2), np.ones(4)] @ homography[2, :]
+    render_transform = homography
+    if corner_denominators.min() <= 0 <= corner_denominators.max():
+        affine, affine_inliers = cv2.estimateAffinePartial2D(
+            POINTS_RIGHT,
+            POINTS_LEFT,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=5.0,
+        )
+        affine_inlier_count = int(affine_inliers.sum()) if affine_inliers is not None else 0
+        if affine is None or affine_inlier_count < 4:
+            print(
+                "The homography horizon crosses the right image, and too few landmark pairs "
+                "support a stable full-frame similarity transform. Check the landmark pairs.",
+                file=sys.stderr,
+            )
+            return 1
+        render_transform = np.vstack((affine, [0.0, 0.0, 1.0]))
+        print(
+            "The homography horizon crosses the right image; rendering with a robust "
+            f"similarity transform instead ({affine_inlier_count} inliers)."
+        )
+
+    # Find the union of the left image and the complete transformed right
+    # image so the output shows the left view first and the right view beside it.
+    projected_corners = cv2.perspectiveTransform(right_corners, render_transform).reshape(-1, 2)
+    if not np.isfinite(projected_corners).all():
+        print("The transform projects image corners to non-finite coordinates.", file=sys.stderr)
+        return 1
+
+    min_x = min(0, int(np.floor(projected_corners[:, 0].min())))
+    min_y = min(0, int(np.floor(projected_corners[:, 1].min())))
+    max_x = max(left_width, int(np.ceil(projected_corners[:, 0].max())))
+    max_y = max(left_height, int(np.ceil(projected_corners[:, 1].max())))
+    canvas_width = max_x - min_x
+    canvas_height = max_y - min_y
+    if canvas_width <= 0 or canvas_height <= 0 or canvas_width * canvas_height > 250_000_000:
+        print(
+            f"The estimated panorama canvas is unreasonable ({canvas_width}x{canvas_height}). "
+            "Check the landmark pairs and homography.",
+            file=sys.stderr,
+        )
+        return 1
+
+    translation = np.array(
+        [[1.0, 0.0, -min_x], [0.0, 1.0, -min_y], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    canvas_transform = translation @ render_transform
+    # Save the right image by itself, cropped to its transformed bounds. Keep
+    # a second copy on the shared panorama canvas for preview composition.
+    right_min_x = int(np.floor(projected_corners[:, 0].min()))
+    right_min_y = int(np.floor(projected_corners[:, 1].min()))
+    right_max_x = int(np.ceil(projected_corners[:, 0].max()))
+    right_max_y = int(np.ceil(projected_corners[:, 1].max()))
+    right_canvas_width = right_max_x - right_min_x
+    right_canvas_height = right_max_y - right_min_y
+    right_translation = np.array(
+        [[1.0, 0.0, -right_min_x], [0.0, 1.0, -right_min_y], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    warped_right = cv2.warpPerspective(
+        right,
+        right_translation @ render_transform,
+        (right_canvas_width, right_canvas_height),
+    )
+    warped_right_on_panorama = cv2.warpPerspective(
+        right, canvas_transform, (canvas_width, canvas_height)
+    )
+    left_on_canvas = np.zeros((canvas_height, canvas_width, 3), dtype=left.dtype)
+    left_x, left_y = -min_x, -min_y
+    left_on_canvas[left_y:left_y + left_height, left_x:left_x + left_width] = left
+
+    # Blend only where both images contain pixels; retain original colors in
+    # areas covered by just one image.
+    right_mask = cv2.warpPerspective(
+        np.full((right_height, right_width), 255, dtype=np.uint8),
+        canvas_transform,
+        (canvas_width, canvas_height),
+        flags=cv2.INTER_NEAREST,
+    ) > 0
+    left_mask = np.zeros((canvas_height, canvas_width), dtype=bool)
+    left_mask[left_y:left_y + left_height, left_x:left_x + left_width] = True
+    overlap = left_mask & right_mask
+    preview = left_on_canvas.copy()
+    preview[right_mask & ~left_mask] = warped_right_on_panorama[right_mask & ~left_mask]
+    preview[overlap] = cv2.addWeighted(
+        left_on_canvas[overlap], 0.5, warped_right_on_panorama[overlap], 0.5, 0
+    )
+    print(f"Panorama canvas: {canvas_width}x{canvas_height}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     warped_path = args.output_dir / "warped_right.jpg"
@@ -144,7 +242,7 @@ def main() -> int:
     print(f"Warped right image saved to: {warped_path.resolve()}")
     print(f"Alignment preview saved to: {preview_path.resolve()}")
     cv2.imshow("Left image", left)
-    cv2.imshow("Right warped onto left", warped_right)
+    cv2.imshow("Full right image warped onto panorama canvas", warped_right)
     cv2.imshow("Alignment preview", preview)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
