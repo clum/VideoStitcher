@@ -9,6 +9,7 @@
 
 ## Shared workflow conventions
 
+- Activate the `VideoStitcher` Conda environment before running project code.
 - Keep each workflow step independently callable, with reusable Python implementation under `Utilities/` and user-facing entry points under `Workflow/`.
 - Define each step's inputs, outputs, validation, failure handling, and acceptance criteria in its own instructions.
 - Pass data between steps through explicit output files and settings. Resolve configured result paths consistently and preserve source media.
