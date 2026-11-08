@@ -68,6 +68,12 @@ def parse_args() -> argparse.Namespace:
         default=HERE,
         help=f"Directory for warped_right.jpg and alignment_preview.jpg (default: {HERE}).",
     )
+    parser.add_argument(
+        "--overlap-mode",
+        choices=("left", "blend"),
+        default="left",
+        help="How to composite overlapping pixels in the preview (default: left).",
+    )
     args = parser.parse_args()
     if args.images and len(args.images) != 2:
         parser.error("provide exactly two image paths, or none to use the sample frames")
@@ -211,8 +217,8 @@ def main() -> int:
     left_x, left_y = -min_x, -min_y
     left_on_canvas[left_y:left_y + left_height, left_x:left_x + left_width] = left
 
-    # Blend only where both images contain pixels; retain original colors in
-    # areas covered by just one image.
+    # Use the left camera wherever it covers the canvas, and fill only the
+    # remaining canvas area with pixels from the warped right camera.
     right_mask = cv2.warpPerspective(
         np.full((right_height, right_width), 255, dtype=np.uint8),
         canvas_transform,
@@ -221,12 +227,13 @@ def main() -> int:
     ) > 0
     left_mask = np.zeros((canvas_height, canvas_width), dtype=bool)
     left_mask[left_y:left_y + left_height, left_x:left_x + left_width] = True
-    overlap = left_mask & right_mask
     preview = left_on_canvas.copy()
     preview[right_mask & ~left_mask] = warped_right_on_panorama[right_mask & ~left_mask]
-    preview[overlap] = cv2.addWeighted(
-        left_on_canvas[overlap], 0.5, warped_right_on_panorama[overlap], 0.5, 0
-    )
+    if args.overlap_mode == "blend":
+        overlap = left_mask & right_mask
+        preview[overlap] = cv2.addWeighted(
+            left_on_canvas[overlap], 0.5, warped_right_on_panorama[overlap], 0.5, 0
+        )
     print(f"Panorama canvas: {canvas_width}x{canvas_height}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
