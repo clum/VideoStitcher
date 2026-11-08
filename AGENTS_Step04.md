@@ -8,6 +8,7 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 
 - Let the user browse independently for the left image and the right image. Do not require fixed filenames or a preselected Step 03 timestamp pair.
 - Support common raster image formats available through the chosen image-loading library, including JPEG, PNG, and BMP. The file picker should use suitable image filters while allowing the user to select all files if needed.
+- Use the installed OpenCV Python bindings (`cv2`) to decode and scale the supported images.
 - Show the selected file paths in the GUI. A selection on one side must not change the file selected on the other side.
 - Report a clear, side-specific error when a path is missing, the image cannot be decoded, or its dimensions cannot be determined. Keep the current valid selection intact if a replacement selection fails.
 
@@ -26,6 +27,7 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 - Include each selected image path, original image width and height, and its ordered list of integer `{ "x": ..., "y": ... }` coordinates. Include a unique timestamp in the filename to avoid overwriting unrelated records; because inputs are user-selected files, do not assume their names follow Step 03 conventions.
 - Provide an explicit save action. Do not save incomplete records silently. If either image is missing or has no points, explain what is missing and do not write a partial record.
 - Create the output folder as needed. On write failure, report the destination and error without modifying the source images.
+- Provide an export action that accepts an existing coordinate JSON record and writes a `.txt` file. For each image, write its `ImagePath` on a line followed by that image's points in JSON order, one per line as `[x, y],`. Write the left image group first, then the right image group, with a blank line between them. Let the user choose the text destination and do not overwrite the input JSON.
 
 ## Validation and failure handling
 
@@ -41,4 +43,5 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 - Every valid click adds a marker and coordinate to the corresponding side's ordered list without removing earlier points. Replacing one side's image clears only that side's points.
 - The user can select and remove any listed point or modify its location; the coordinate list and displayed marker stay synchronized after edits.
 - Saving a complete pair writes a valid JSON record under `ResultsDirectory/Step04_ImageCoordinates/` with both paths, dimensions, and ordered coordinate lists. Missing inputs, empty point lists, failed image reads, and failed writes produce actionable errors.
+- Exporting a valid coordinate JSON writes both image paths and their corresponding ordered point lists as `[x, y],` lines in a text file; malformed JSON or failed writes produce an actionable error.
 - The workflow can be started from the repository root with `python Workflow/Step04_SelectImageCoordinates.py`; reusable logic resides under `Utilities/`.
