@@ -4,6 +4,7 @@
 
 - Read `AGENTS_Step01_Step02.md` when changing the raw-video combine step or the alignment application.
 - Read `AGENTS_Step03.md` when implementing the still-image extraction step.
+- Read `AGENTS_Step04.md` when implementing the image-coordinate selection GUI.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
