@@ -7,6 +7,7 @@
 - Read `AGENTS_Step04.md` when implementing the image-coordinate selection GUI.
 - Read `AGENTS_Step05.md` when implementing homography estimation.
 - Read `AGENTS_Step06.md` when implementing image stitching.
+- Read `AGENTS_Step07.md` when implementing video stitching.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
