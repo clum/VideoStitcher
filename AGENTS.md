@@ -8,6 +8,8 @@
 - Read `AGENTS_Step05.md` when implementing homography estimation.
 - Read `AGENTS_Step06.md` when implementing image stitching.
 - Read `AGENTS_Step07.md` when implementing video stitching.
+- Read `AGENTS_Step07b.md` when converting a video to a lower resolution or frame rate.
+- Read `AGENTS_Step08.md` when implementing removal-range identification.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
