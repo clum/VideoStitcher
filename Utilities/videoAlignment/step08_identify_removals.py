@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import argparse
 import csv
 import json
@@ -13,22 +12,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
-import tkinter as tk
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from .stitching_common import StitchingError, load_settings
 from .workflow_paths import results_directory, scenario_prefix
 
 
-VIDEO_FILTERS = [
-    ("Video files", "*.mp4 *.mov *.mkv *.avi *.m4v *.webm *.mts *.m2ts"),
-    ("All files", "*.*"),
-]
+QT_VIDEO_FILTER = "Video files (*.mp4 *.mov *.mkv *.avi *.m4v *.webm *.mts *.m2ts);;All files (*)"
 TIME_PATTERN = re.compile(r"^(\d+):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$")
 
 
@@ -50,15 +42,41 @@ class RemovalRange:
     comment: str
 
 
-def _tools() -> tuple[str, str, str]:
-    ffmpeg, ffprobe, ffplay = (shutil.which(name) for name in ("ffmpeg", "ffprobe", "ffplay"))
-    missing = [name for name, path in (("ffmpeg", ffmpeg), ("ffprobe", ffprobe), ("ffplay", ffplay)) if not path]
-    if missing:
-        raise StitchingError(
-            "FFmpeg tools not found: " + ", ".join(missing)
-            + ". Install FFmpeg with ffplay and ensure all three tools are available on PATH."
-        )
-    return ffmpeg, ffprobe, ffplay
+try:
+    from PySide6.QtCore import Qt, QUrl
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+    from PySide6.QtWidgets import (
+        QApplication,
+        QAbstractItemView,
+        QFileDialog,
+        QFormLayout,
+        QGridLayout,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QMainWindow,
+        QMessageBox,
+        QPushButton,
+        QPlainTextEdit,
+        QSlider,
+        QTableWidget,
+        QTableWidgetItem,
+        QVBoxLayout,
+        QWidget,
+    )
+
+    QT_IMPORT_ERROR: Exception | None = None
+except (ImportError, OSError) as exc:  # Give users a useful install command if PySide6 is missing.
+    QT_IMPORT_ERROR = exc
+    QMainWindow = object  # type: ignore[assignment,misc]
+
+
+def _ffprobe_tool() -> str:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise StitchingError("ffprobe was not found on PATH. Install FFmpeg and ensure ffprobe is available.")
+    return ffprobe
 
 
 def _fraction(value: str | None) -> float:
@@ -72,6 +90,7 @@ def _fraction(value: str | None) -> float:
 
 
 def probe_video(ffprobe: str, path: Path) -> VideoInfo:
+    """Validate the video stream and obtain basic metadata before Qt loads it."""
     path = path.expanduser().resolve()
     if not path.is_file():
         raise StitchingError(f"Video file does not exist: {path}")
@@ -99,31 +118,6 @@ def probe_video(ffprobe: str, path: Path) -> VideoInfo:
         raise StitchingError(f"Video has invalid dimensions, frame rate, or duration: {path}")
     has_audio = any(item.get("codec_type") == "audio" for item in payload.get("streams", []))
     return VideoInfo(path, width, height, fps, duration, has_audio)
-
-
-def extract_preview(ffmpeg: str, video: VideoInfo, timestamp: float, size: tuple[int, int]) -> bytes:
-    bounded = min(max(timestamp, 0.0), max(0.0, video.duration - 0.001))
-    width, height = size
-    vf = (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
-    )
-    try:
-        result = subprocess.run(
-            [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{bounded:.6f}",
-             "-i", str(video.path), "-frames:v", "1", "-vf", vf, "-f", "image2pipe",
-             "-vcodec", "png", "pipe:1"],
-            capture_output=True, check=False,
-        )
-    except OSError as exc:
-        raise StitchingError(f"Could not start FFmpeg to preview {video.path}: {exc}") from exc
-    if result.returncode or not result.stdout:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise StitchingError(
-            f"Could not decode a preview frame from {video.path.name} at {bounded:.3f}s"
-            + (f": {detail}" if detail else ".")
-        )
-    return result.stdout
 
 
 def format_timestamp(seconds: float) -> str:
@@ -187,7 +181,7 @@ def load_ranges(path: Path, duration: float, first_uid: int = 1) -> list[Removal
 
 
 def save_ranges(path: Path, ranges: list[RemovalRange]) -> None:
-    """Atomically replace a scenario CSV with validated, sorted range rows."""
+    """Atomically replace a CSV with sorted range rows and sequential IDs."""
     path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(ranges, key=lambda item: (item.start, item.end))
     temporary: Path | None = None
@@ -210,538 +204,518 @@ def save_ranges(path: Path, ranges: list[RemovalRange]) -> None:
         raise
 
 
-class RemovalEditor:
-    PREVIEW_SIZE = (960, 540)
+if QT_IMPORT_ERROR is None:
+    class RemovalEditor(QMainWindow):
+        """Step 08 editor whose media player owns the playback clock."""
 
-    def __init__(
-        self, root: tk.Tk, settings: dict[str, Any], repository_root: Path,
-        ffmpeg: str, ffprobe: str, ffplay: str,
-    ):
-        self.root = root
-        self.settings = settings
-        self.repository_root = repository_root
-        self.ffmpeg = ffmpeg
-        self.ffprobe = ffprobe
-        self.ffplay = ffplay
-        self.default_output_path = results_directory(settings, repository_root) / "Step08_IdentifyRemovals" / (
-            f"{scenario_prefix(settings['ScenarioName'])}_RemovalSegments.csv"
-        )
-        self.output_path = self.default_output_path
-        self.video: VideoInfo | None = None
-        self.ranges: list[RemovalRange] = []
-        self.next_uid = 1
-        self.selected_uid: int | None = None
-        self.dirty = False
-        self.playing = False
-        self.play_started_at = 0.0
-        self.play_started_position = 0.0
-        self.audio_process: subprocess.Popen | None = None
-        self.updating_timeline = False
-        self.position = 0.0
-        self.seek_id = 0
-        self.preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="step08-preview")
-        self.preview_future: Future[bytes] | None = None
-        self.pending_preview: tuple[int, VideoInfo, float] | None = None
-        self.preview_image: tk.PhotoImage | None = None
-        self._build_ui()
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
-
-    def _build_ui(self) -> None:
-        self.root.title("Video Stitcher — Identify Removal Sections")
-        self.root.minsize(900, 700)
-        self.root.rowconfigure(1, weight=1)
-        self.root.columnconfigure(0, weight=1)
-
-        top = ttk.Frame(self.root, padding=10)
-        top.grid(row=0, column=0, sticky="ew")
-        top.columnconfigure(1, weight=1)
-        ttk.Button(top, text="Browse video…", command=self.browse_video).grid(row=0, column=0, sticky="w")
-        self.path_var = tk.StringVar(value="No video loaded")
-        ttk.Label(top, textvariable=self.path_var, anchor="w", wraplength=1050).grid(
-            row=0, column=1, sticky="ew", padx=(10, 0)
-        )
-        self.info_var = tk.StringVar(value="")
-        ttk.Label(top, textvariable=self.info_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
-
-        body = ttk.Frame(self.root, padding=(10, 0, 10, 8))
-        body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
-
-        preview_frame = ttk.LabelFrame(body, text="Video preview", padding=8)
-        preview_frame.grid(row=0, column=0, sticky="nsew")
-        preview_frame.rowconfigure(0, weight=1)
-        preview_frame.columnconfigure(0, weight=1)
-        self.preview = tk.Label(
-            preview_frame, text="Load a video to begin", background="#171717", foreground="white",
-            anchor="center", width=120, height=34,
-        )
-        self.preview.grid(row=0, column=0, sticky="nsew")
-        self.clock_var = tk.StringVar(value="00:00:00.000 / 00:00:00.000")
-        ttk.Label(preview_frame, textvariable=self.clock_var, font=("Segoe UI", 11, "bold")).grid(
-            row=1, column=0, sticky="e", pady=(6, 0)
-        )
-
-        playback = ttk.Frame(body, padding=(0, 8, 0, 0))
-        playback.grid(row=1, column=0, sticky="ew")
-        playback.columnconfigure(2, weight=1)
-        self.play_button = ttk.Button(playback, text="Play", command=self.toggle_play, state="disabled")
-        self.play_button.grid(row=0, column=0, sticky="w")
-        ttk.Button(playback, text="Stop", command=self.stop_play).grid(row=0, column=1, padx=(6, 10), sticky="w")
-        self.position_var = tk.DoubleVar(value=0.0)
-        self.scrubber = ttk.Scale(playback, from_=0, to=1, variable=self.position_var, command=self.scrubbed, state="disabled")
-        self.scrubber.grid(row=0, column=2, sticky="ew")
-
-        edit = ttk.LabelFrame(body, text="Removal intervals", padding=8)
-        edit.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        for col in (1, 3, 5):
-            edit.columnconfigure(col, weight=1)
-        self.start_var = tk.StringVar()
-        self.end_var = tk.StringVar()
-        ttk.Label(edit, text="Start (HH:MM:SS.mmm)").grid(row=0, column=0, sticky="w")
-        ttk.Entry(edit, textvariable=self.start_var, width=17).grid(row=0, column=1, sticky="ew", padx=(4, 4))
-        ttk.Button(edit, text="Use playhead", command=lambda: self.set_field_to_position(self.start_var)).grid(row=0, column=2, sticky="w")
-        ttk.Label(edit, text="End").grid(row=0, column=3, sticky="e", padx=(8, 0))
-        ttk.Entry(edit, textvariable=self.end_var, width=17).grid(row=0, column=4, sticky="ew", padx=(4, 4))
-        ttk.Button(edit, text="Use playhead", command=lambda: self.set_field_to_position(self.end_var)).grid(row=0, column=5, sticky="w")
-        ttk.Label(edit, text="Comment (optional)").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self.comment_text = tk.Text(edit, height=2, wrap="word")
-        self.comment_text.grid(row=1, column=1, columnspan=5, sticky="ew", padx=(4, 0), pady=(6, 0))
-        actions = ttk.Frame(edit)
-        actions.grid(row=0, column=6, rowspan=2, padx=(10, 0), sticky="e")
-        self.add_button = ttk.Button(actions, text="Add range", command=self.add_range, state="disabled")
-        self.add_button.pack(side="left")
-        self.update_button = ttk.Button(actions, text="Update selected", command=self.update_range, state="disabled")
-        self.update_button.pack(side="left", padx=(5, 0))
-        self.remove_button = ttk.Button(actions, text="Remove selected", command=self.remove_range, state="disabled")
-        self.remove_button.pack(side="left", padx=(5, 0))
-        ttk.Button(actions, text="Clear fields", command=self.clear_fields).pack(side="left", padx=(5, 0))
-
-        columns = ("id", "start", "end", "comment")
-        self.tree = ttk.Treeview(edit, columns=columns, show="headings", height=6, selectmode="browse")
-        self.tree.heading("id", text="ID")
-        self.tree.heading("start", text="Start")
-        self.tree.heading("end", text="End")
-        self.tree.heading("comment", text="Comment")
-        self.tree.column("id", width=55, stretch=False, anchor="center")
-        self.tree.column("start", width=145, stretch=False)
-        self.tree.column("end", width=145, stretch=False)
-        self.tree.column("comment", width=400, stretch=True)
-        self.tree.grid(row=2, column=0, columnspan=7, sticky="ew", pady=(8, 0))
-        self.tree.bind("<<TreeviewSelect>>", self.on_select_range)
-
-        bottom = ttk.Frame(self.root, padding=(10, 0, 10, 8))
-        bottom.grid(row=2, column=0, sticky="ew")
-        bottom.columnconfigure(0, weight=1)
-        self.status_var = tk.StringVar(value="Load a video to identify intervals.")
-        ttk.Label(bottom, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
-        self.output_path_var = tk.StringVar(value=f"CSV: {self.output_path}")
-        ttk.Label(bottom, textvariable=self.output_path_var, wraplength=900).grid(
-            row=1, column=0, sticky="w", pady=(3, 0)
-        )
-        self.browse_output_button = ttk.Button(
-            bottom, text="Browse CSV…", command=self.browse_output_csv, state="disabled"
-        )
-        self.browse_output_button.grid(row=1, column=1, sticky="e", padx=(8, 0))
-        self.save_button = ttk.Button(bottom, text="Save CSV", command=self.save_csv, state="disabled")
-        self.save_button.grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 0))
-
-    def browse_video(self) -> None:
-        selected = filedialog.askopenfilename(title="Select stitched video", filetypes=VIDEO_FILTERS, parent=self.root)
-        if not selected:
-            return
-        try:
-            candidate = probe_video(self.ffprobe, Path(selected))
-        except StitchingError as exc:
-            messagebox.showerror("Could not open video", str(exc), parent=self.root)
-            return
-        if not self._confirm_discard_or_save():
-            return
-        self.load_video(candidate)
-
-    def load_video(self, video: VideoInfo) -> None:
-        self.pause_playback()
-        self.video = video
-        self.output_path = self.default_output_path
-        self.output_path_var.set(f"CSV: {self.output_path}")
-        self.ranges.clear()
-        self.next_uid = 1
-        self.selected_uid = None
-        self.position = 0.0
-        self.position_var.set(0.0)
-        self.start_var.set("")
-        self.end_var.set("")
-        self.comment_text.delete("1.0", "end")
-        self._refresh_ranges()
-        self.dirty = False
-        self.path_var.set(str(video.path))
-        audio = "audio available" if video.has_audio else "no audio stream"
-        self.info_var.set(
-            f"Source: {video.width}×{video.height} · {video.fps:.6g} fps · "
-            f"{format_timestamp(video.duration)} · {audio}"
-        )
-        self.scrubber.configure(from_=0, to=video.duration, state="normal")
-        self.play_button.configure(state="normal")
-        self.add_button.configure(state="normal")
-        self.save_button.configure(state="normal")
-        self.browse_output_button.configure(state="normal")
-        self.clock_var.set(f"{format_timestamp(0)} / {format_timestamp(video.duration)}")
-        self.status_var.set("Ready. Mark a start and end time, then add a range.")
-        self.request_preview(0.0)
-
-    def _confirm_discard_or_save(self, action: str = "loading another video") -> bool:
-        if not self.dirty and not self.ranges:
-            return True
-        choice = messagebox.askyesnocancel(
-            "Current ranges will be replaced",
-            f"Save the current ranges before {action}?",
-            parent=self.root,
-        )
-        if choice is None:
-            return False
-        if choice:
-            return self.save_csv()
-        return True
-
-    def browse_output_csv(self) -> None:
-        if self.video is None:
-            messagebox.showerror("No video loaded", "Load a video before selecting a removal CSV.", parent=self.root)
-            return
-        selected = filedialog.asksaveasfilename(
-            title="Select removal CSV",
-            parent=self.root,
-            initialdir=str(
-                self.output_path.parent if self.output_path.parent.is_dir() else self.repository_root
-            ),
-            initialfile=self.output_path.name,
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            confirmoverwrite=False,
-        )
-        if not selected:
-            return
-        candidate = Path(selected).expanduser().resolve()
-        if candidate.suffix.lower() != ".csv":
-            messagebox.showerror("Invalid output file", "Choose a file with the .csv extension.", parent=self.root)
-            return
-
-        if candidate.exists():
-            if not candidate.is_file():
-                messagebox.showerror("Invalid output file", f"Not a file: {candidate}", parent=self.root)
-                return
-            try:
-                imported = load_ranges(candidate, self.video.duration)
-            except (OSError, ValueError) as exc:
-                messagebox.showerror("Could not load CSV", str(exc), parent=self.root)
-                return
-            if not self._confirm_discard_or_save("loading ranges from another CSV"):
-                return
-            self.output_path = candidate
-            self.output_path_var.set(f"CSV: {self.output_path}")
-            self.ranges = imported
-            self.next_uid = len(imported) + 1
-            self.selected_uid = None
-            self._refresh_ranges()
-            self.clear_fields()
+        def __init__(
+            self, settings: dict[str, Any], repository_root: Path, ffprobe: str,
+        ):
+            super().__init__()
+            self.settings = settings
+            self.repository_root = repository_root
+            self.ffprobe = ffprobe
+            self.default_output_path = results_directory(settings, repository_root) / "Step08_IdentifyRemovals" / (
+                f"{scenario_prefix(settings['ScenarioName'])}_RemovalSegments.csv"
+            )
+            self.output_path = self.default_output_path
+            self.video: VideoInfo | None = None
+            self.duration = 0.0
+            self.media_ready = False
+            self.ranges: list[RemovalRange] = []
+            self.next_uid = 1
+            self.selected_uid: int | None = None
             self.dirty = False
-            self.status_var.set(f"Loaded {len(imported)} interval(s) from {candidate}")
-            return
+            self.updating_slider = False
 
-        self.output_path = candidate
-        self.output_path_var.set(f"CSV: {self.output_path}")
-        self.status_var.set(f"New CSV destination selected: {candidate}")
+            self.setWindowTitle("Video Stitcher — Identify Removal Sections")
+            self.resize(1200, 900)
+            self._build_ui()
 
-    def set_field_to_position(self, variable: tk.StringVar) -> None:
-        if self.video is not None:
-            variable.set(format_timestamp(self.position))
+            self.audio_output = QAudioOutput(self)
+            self.player = QMediaPlayer(self)
+            self.player.setAudioOutput(self.audio_output)
+            self.player.setVideoOutput(self.video_widget)
+            self.player.positionChanged.connect(self._position_changed)
+            self.player.durationChanged.connect(self._duration_changed)
+            self.player.mediaStatusChanged.connect(self._media_status_changed)
+            self.player.playbackStateChanged.connect(self._playback_state_changed)
+            self.player.errorOccurred.connect(self._media_error)
 
-    def scrubbed(self, raw_value: str) -> None:
-        if self.video is None or self.updating_timeline:
-            return
-        self.position = min(max(float(raw_value), 0.0), self.video.duration)
-        self.clock_var.set(f"{format_timestamp(self.position)} / {format_timestamp(self.video.duration)}")
-        if self.playing:
-            self._start_audio(self.position)
-            self.play_started_at = time.monotonic()
-            self.play_started_position = self.position
-        self.request_preview(self.position)
+        def _build_ui(self) -> None:
+            central = QWidget(self)
+            self.setCentralWidget(central)
+            layout = QVBoxLayout(central)
 
-    def request_preview(self, timestamp: float) -> None:
-        if self.video is None:
-            return
-        self.seek_id += 1
-        request_id = self.seek_id
-        video = self.video
-        if self.preview_future is not None and not self.preview_future.done():
-            self.pending_preview = (request_id, video, timestamp)
-            return
-        self.pending_preview = None
-        self._submit_preview(request_id, video, timestamp)
+            video_row = QHBoxLayout()
+            self.browse_video_button = QPushButton("Browse video…")
+            self.browse_video_button.clicked.connect(self.browse_video)
+            video_row.addWidget(self.browse_video_button)
+            self.path_label = QLabel("No video loaded")
+            self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.path_label.setWordWrap(True)
+            video_row.addWidget(self.path_label, stretch=1)
+            layout.addLayout(video_row)
+            self.info_label = QLabel("")
+            layout.addWidget(self.info_label)
 
-    def _submit_preview(self, request_id: int, video: VideoInfo, timestamp: float) -> None:
-        future = self.preview_executor.submit(extract_preview, self.ffmpeg, video, timestamp, self.PREVIEW_SIZE)
-        self.preview_future = future
+            self.video_widget = QVideoWidget()
+            self.video_widget.setMinimumSize(640, 360)
+            self.video_widget.setStyleSheet("background-color: #171717;")
+            layout.addWidget(self.video_widget, stretch=1)
+            self.clock_label = QLabel("00:00:00.000 / 00:00:00.000")
+            self.clock_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+            layout.addWidget(self.clock_label)
 
-        def completed(done: Future[bytes]) -> None:
-            try:
-                png = done.result()
-                error = None
-            except Exception as exc:  # Marshal worker errors into Tk's main thread.
-                png, error = None, str(exc)
-            try:
-                self.root.after(0, self._preview_finished, done, request_id, video.path, png, error)
-            except tk.TclError:
-                pass
+            playback = QHBoxLayout()
+            self.play_button = QPushButton("Play")
+            self.play_button.clicked.connect(self.toggle_play)
+            self.play_button.setEnabled(False)
+            playback.addWidget(self.play_button)
+            self.stop_button = QPushButton("Stop")
+            self.stop_button.clicked.connect(self.stop_play)
+            self.stop_button.setEnabled(False)
+            playback.addWidget(self.stop_button)
+            self.scrubber = QSlider(Qt.Orientation.Horizontal)
+            self.scrubber.setRange(0, 1)
+            self.scrubber.setEnabled(False)
+            self.scrubber.sliderMoved.connect(self._seek_from_slider)
+            self.scrubber.sliderPressed.connect(self._slider_pressed)
+            self.scrubber.sliderReleased.connect(self._slider_released)
+            playback.addWidget(self.scrubber, stretch=1)
+            layout.addLayout(playback)
 
-        future.add_done_callback(completed)
+            editor = QGridLayout()
+            editor.addWidget(QLabel("Start (HH:MM:SS.mmm)"), 0, 0)
+            self.start_edit = QLineEdit()
+            editor.addWidget(self.start_edit, 0, 1)
+            self.use_start_button = QPushButton("Use playhead")
+            self.use_start_button.clicked.connect(lambda: self._set_field_to_position(self.start_edit))
+            self.use_start_button.setEnabled(False)
+            editor.addWidget(self.use_start_button, 0, 2)
+            editor.addWidget(QLabel("End"), 0, 3)
+            self.end_edit = QLineEdit()
+            editor.addWidget(self.end_edit, 0, 4)
+            self.use_end_button = QPushButton("Use playhead")
+            self.use_end_button.clicked.connect(lambda: self._set_field_to_position(self.end_edit))
+            self.use_end_button.setEnabled(False)
+            editor.addWidget(self.use_end_button, 0, 5)
+            editor.addWidget(QLabel("Comment (optional)"), 1, 0)
+            self.comment_edit = QPlainTextEdit()
+            self.comment_edit.setMaximumHeight(72)
+            editor.addWidget(self.comment_edit, 1, 1, 1, 5)
 
-    def _preview_finished(
-        self, finished: Future[bytes], request_id: int, path: Path, png: bytes | None, error: str | None
-    ) -> None:
-        self.show_preview(request_id, path, png, error)
-        if self.preview_future is finished:
-            self.preview_future = None
-        pending = self.pending_preview
-        if pending is not None and (self.preview_future is None or self.preview_future.done()):
-            self.pending_preview = None
-            pending_id, video, timestamp = pending
-            self._submit_preview(pending_id, video, timestamp)
+            actions = QHBoxLayout()
+            self.add_button = QPushButton("Add range")
+            self.add_button.clicked.connect(self.add_range)
+            self.add_button.setEnabled(False)
+            actions.addWidget(self.add_button)
+            self.update_button = QPushButton("Update selected")
+            self.update_button.clicked.connect(self.update_range)
+            self.update_button.setEnabled(False)
+            actions.addWidget(self.update_button)
+            self.remove_button = QPushButton("Remove selected")
+            self.remove_button.clicked.connect(self.remove_range)
+            self.remove_button.setEnabled(False)
+            actions.addWidget(self.remove_button)
+            clear_button = QPushButton("Clear fields")
+            clear_button.clicked.connect(self.clear_fields)
+            actions.addWidget(clear_button)
+            editor.addLayout(actions, 0, 6, 2, 1)
+            for col in (1, 4):
+                editor.setColumnStretch(col, 1)
+            layout.addLayout(editor)
 
-    def show_preview(self, request_id: int, path: Path, png: bytes | None, error: str | None) -> None:
-        if request_id != self.seek_id or self.video is None or self.video.path != path:
-            return
-        if error or png is None:
-            self.status_var.set(error or "Could not decode preview frame.")
-            return
-        try:
-            self.preview_image = tk.PhotoImage(data=base64.b64encode(png))
-            self.preview.configure(image=self.preview_image, text="")
-        except tk.TclError as exc:
-            self.status_var.set(f"Could not display preview image: {exc}")
-            return
-        self.status_var.set("Preview ready. Mark a start and end time, then add a range.")
+            self.table = QTableWidget(0, 4)
+            self.table.setHorizontalHeaderLabels(("ID", "Start", "End", "Comment"))
+            self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.itemSelectionChanged.connect(self.on_select_range)
+            layout.addWidget(self.table)
 
-    def toggle_play(self) -> None:
-        if self.video is None:
-            return
-        if self.playing:
-            self.pause_playback()
-            return
-        if self.position >= self.video.duration:
-            self.set_position(0.0)
-        if self.video.has_audio:
-            self._start_audio(self.position, notify=True)
-        else:
-            self.status_var.set("This video has no audio stream; playing video only.")
-        self.playing = True
-        self.play_started_at = time.monotonic()
-        self.play_started_position = self.position
-        self.play_button.configure(text="Pause")
-        self._play_tick()
+            bottom = QGridLayout()
+            self.status_label = QLabel("Load a video to identify intervals.")
+            self.status_label.setWordWrap(True)
+            bottom.addWidget(self.status_label, 0, 0, 1, 3)
+            self.output_path_label = QLabel(f"CSV: {self.output_path}")
+            self.output_path_label.setWordWrap(True)
+            self.output_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            bottom.addWidget(self.output_path_label, 1, 0)
+            self.browse_csv_button = QPushButton("Browse CSV…")
+            self.browse_csv_button.clicked.connect(self.browse_output_csv)
+            self.browse_csv_button.setEnabled(False)
+            bottom.addWidget(self.browse_csv_button, 1, 1)
+            self.save_button = QPushButton("Save CSV")
+            self.save_button.clicked.connect(self.save_csv)
+            self.save_button.setEnabled(False)
+            bottom.addWidget(self.save_button, 0, 3, 2, 1)
+            bottom.setColumnStretch(0, 1)
+            layout.addLayout(bottom)
 
-    def _play_tick(self) -> None:
-        if not self.playing or self.video is None:
-            return
-        new_position = self.play_started_position + (time.monotonic() - self.play_started_at)
-        if new_position >= self.video.duration:
-            self.set_position(self.video.duration)
-            self.pause_playback()
-            return
-        if self.audio_process is not None and self.audio_process.poll() is not None:
-            return_code = self.audio_process.returncode
-            self.audio_process = None
-            if return_code:
-                self.status_var.set(f"Audio playback ended with an error (code {return_code}); video continues.")
-            else:
-                self.status_var.set("Audio track ended; video continues.")
-        self.set_position(new_position, request_frame=False)
-        # Display fewer preview frames than the source while keeping the clock on the source timeline.
-        if not hasattr(self, "last_play_preview") or time.monotonic() - self.last_play_preview >= 0.5:
-            self.last_play_preview = time.monotonic()
-            self.request_preview(new_position)
-        self.root.after(50, self._play_tick)
+        def _set_status(self, message: str) -> None:
+            self.status_label.setText(message)
 
-    def set_position(self, value: float, request_frame: bool = True) -> None:
-        if self.video is None:
-            return
-        self.position = min(max(float(value), 0.0), self.video.duration)
-        self.updating_timeline = True
-        try:
-            self.position_var.set(self.position)
-        finally:
-            self.updating_timeline = False
-        self.clock_var.set(f"{format_timestamp(self.position)} / {format_timestamp(self.video.duration)}")
-        if request_frame:
-            self.request_preview(self.position)
-
-    def pause_playback(self) -> None:
-        self.playing = False
-        self._stop_audio()
-        if hasattr(self, "play_button"):
-            self.play_button.configure(text="Play")
-
-    def _start_audio(self, timestamp: float, notify: bool = False) -> bool:
-        self._stop_audio()
-        if self.video is None or not self.video.has_audio:
-            return True
-        try:
-            self.audio_process = subprocess.Popen(
-                [self.ffplay, "-hide_banner", "-loglevel", "error", "-nodisp", "-autoexit",
-                 "-ss", f"{max(0.0, timestamp):.6f}", "-i", str(self.video.path), "-vn"],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        def browse_video(self) -> None:
+            selected, _ = QFileDialog.getOpenFileName(
+                self, "Select stitched video", "", QT_VIDEO_FILTER,
             )
-            return True
-        except OSError as exc:
-            self.audio_process = None
-            self.status_var.set(f"Could not start audio playback: {exc}")
-            if notify:
-                messagebox.showerror("Audio playback unavailable", str(exc), parent=self.root)
-            return False
+            if not selected:
+                return
+            try:
+                candidate = probe_video(self.ffprobe, Path(selected))
+            except StitchingError as exc:
+                QMessageBox.critical(self, "Could not open video", str(exc))
+                return
+            if not self._confirm_discard_or_save("loading another video"):
+                return
+            self.load_video(candidate)
 
-    def _stop_audio(self) -> None:
-        process, self.audio_process = self.audio_process, None
-        if process is None or process.poll() is not None:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-    def stop_play(self) -> None:
-        self.pause_playback()
-        self.set_position(0.0)
-
-    def add_range(self) -> None:
-        self._create_or_update(None)
-
-    def update_range(self) -> None:
-        self._create_or_update(self.selected_uid)
-
-    def _create_or_update(self, uid: int | None) -> None:
-        if self.video is None:
-            return
-        try:
-            start = parse_timestamp(self.start_var.get())
-            end = parse_timestamp(self.end_var.get())
-        except ValueError as exc:
-            messagebox.showerror("Invalid time", str(exc), parent=self.root)
-            return
-        if not (0 <= start < end <= self.video.duration):
-            messagebox.showerror(
-                "Invalid interval", f"Require 0 ≤ start < end ≤ video duration ({format_timestamp(self.video.duration)}).",
-                parent=self.root,
+        def load_video(self, video: VideoInfo) -> None:
+            self.player.stop()
+            self.media_ready = False
+            self.video = video
+            self.duration = 0.0
+            self.output_path = self.default_output_path
+            self.output_path_label.setText(f"CSV: {self.output_path}")
+            self.ranges.clear()
+            self.next_uid = 1
+            self.selected_uid = None
+            self.dirty = False
+            self._refresh_ranges()
+            self.start_edit.clear()
+            self.end_edit.clear()
+            self.comment_edit.clear()
+            self.path_label.setText(str(video.path))
+            self.info_label.setText(
+                f"Source: {video.width}×{video.height} · {video.fps:.6g} fps · "
+                f"{format_timestamp(video.duration)} · "
+                f"{'audio available' if video.has_audio else 'no audio stream'} · Loading media…"
             )
-            return
-        for existing in self.ranges:
-            if existing.uid != uid and start < existing.end and existing.start < end:
-                messagebox.showerror(
-                    "Overlapping interval",
-                    f"This interval overlaps {format_timestamp(existing.start)}–{format_timestamp(existing.end)}. "
-                    "Removal intervals must not overlap.", parent=self.root,
+            self.clock_label.setText("00:00:00.000 / Loading duration…")
+            self._set_media_controls(False)
+            self.scrubber.setRange(0, max(1, int(round(video.duration * 1000))))
+            self.player.setSource(QUrl.fromLocalFile(str(video.path)))
+            self._set_status("Loading video in Qt Multimedia…")
+
+        def _set_media_controls(self, enabled: bool) -> None:
+            self.play_button.setEnabled(enabled)
+            self.stop_button.setEnabled(enabled)
+            self.scrubber.setEnabled(enabled)
+            self.add_button.setEnabled(enabled)
+            self.use_start_button.setEnabled(enabled)
+            self.use_end_button.setEnabled(enabled)
+            self.save_button.setEnabled(enabled)
+            self.browse_csv_button.setEnabled(enabled)
+
+        def _media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
+            if status == QMediaPlayer.MediaStatus.LoadedMedia:
+                duration_ms = self.player.duration()
+                if duration_ms <= 0:
+                    self._set_status("Qt Multimedia loaded the file but did not report a valid duration.")
+                    self._set_media_controls(False)
+                    return
+                self.duration = duration_ms / 1000.0
+                self.media_ready = True
+                self.scrubber.setRange(0, duration_ms)
+                self._set_media_controls(True)
+                if self.player.hasAudio():
+                    audio = "audio available"
+                elif self.video.has_audio:
+                    audio = "source audio unavailable in Qt Multimedia"
+                else:
+                    audio = "no audio stream"
+                self.info_label.setText(
+                    f"Source: {self.video.width}×{self.video.height} · {self.video.fps:.6g} fps · "
+                    f"{format_timestamp(self.duration)} · {audio}"
+                )
+                self.clock_label.setText(f"{format_timestamp(0)} / {format_timestamp(self.duration)}")
+                if self.player.hasAudio():
+                    self._set_status("Ready. Mark a start and end time, then add a range.")
+                elif self.video.has_audio:
+                    self._set_status(
+                        "Qt Multimedia could not open the source audio track; video and range marking remain available."
+                    )
+                else:
+                    self._set_status(
+                        "This video has no audio stream; video playback and range marking are available."
+                    )
+            elif status == QMediaPlayer.MediaStatus.InvalidMedia:
+                self.media_ready = False
+                self._set_media_controls(False)
+                self._set_status("Could not load video in Qt Multimedia. Choose another video or check its codecs.")
+            elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+                self._position_changed(self.player.position())
+
+        def _duration_changed(self, duration_ms: int) -> None:
+            if duration_ms <= 0:
+                return
+            self.duration = duration_ms / 1000.0
+            self.scrubber.setRange(0, duration_ms)
+            self.clock_label.setText(
+                f"{format_timestamp(self.player.position() / 1000.0)} / {format_timestamp(self.duration)}"
+            )
+
+        def _media_error(self, _error: QMediaPlayer.Error, error_string: str) -> None:
+            if not error_string:
+                return
+            if self.player.hasVideo() and self.player.duration() > 0:
+                self.media_ready = True
+                self.duration = self.player.duration() / 1000.0
+                self._set_media_controls(True)
+                self._set_status(
+                    f"Qt Multimedia reported a playback warning: {error_string}. "
+                    "Video and interval marking remain available; audio may be unavailable."
                 )
                 return
-        comment = self.comment_text.get("1.0", "end-1c")
-        if uid is None:
-            created_uid = self.next_uid
-            self.ranges.append(RemovalRange(created_uid, start, end, comment))
-            self.next_uid += 1
-        else:
-            created_uid = uid
-            existing = next((item for item in self.ranges if item.uid == uid), None)
-            if existing is None:
-                messagebox.showerror("Selection changed", "Select a range and try again.", parent=self.root)
-                return
-            existing.start, existing.end, existing.comment = start, end, comment
-        self.ranges.sort(key=lambda item: (item.start, item.end))
-        self.dirty = True
-        self._refresh_ranges(select_uid=created_uid)
-        self.status_var.set("Range updated. Save CSV to keep these changes.")
+            self.media_ready = False
+            self._set_media_controls(False)
+            self._set_status(f"Qt Multimedia playback error: {error_string}")
+            QMessageBox.critical(self, "Video playback error", error_string)
 
-    def _refresh_ranges(self, select_uid: int | None = None) -> None:
-        self.tree.delete(*self.tree.get_children())
-        ordered = sorted(self.ranges, key=lambda item: (item.start, item.end))
-        for index, item in enumerate(ordered, start=1):
-            self.tree.insert(
-                "", "end", iid=str(item.uid),
-                values=(index, format_timestamp(item.start), format_timestamp(item.end), item.comment.replace("\n", " ")),
+        def _position_changed(self, position_ms: int) -> None:
+            seconds = max(0.0, position_ms / 1000.0)
+            self.clock_label.setText(f"{format_timestamp(seconds)} / {format_timestamp(self.duration)}")
+            if not self.updating_slider:
+                self.updating_slider = True
+                self.scrubber.setValue(position_ms)
+                self.updating_slider = False
+
+        def _playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+            self.play_button.setText(
+                "Pause" if state == QMediaPlayer.PlaybackState.PlayingState else "Play"
             )
-        if select_uid is not None and str(select_uid) in self.tree.get_children():
-            self.tree.selection_set(str(select_uid))
-            self.tree.focus(str(select_uid))
-            self.selected_uid = select_uid
-        else:
+
+        def toggle_play(self) -> None:
+            if not self.media_ready:
+                return
+            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.player.pause()
+            else:
+                self.player.play()
+
+        def stop_play(self) -> None:
+            if self.media_ready:
+                self.player.stop()
+                self.player.setPosition(0)
+                self._position_changed(0)
+
+        def _slider_pressed(self) -> None:
+            self.updating_slider = True
+
+        def _seek_from_slider(self, position_ms: int) -> None:
+            if self.media_ready:
+                self.player.setPosition(position_ms)
+                self._position_changed(position_ms)
+
+        def _slider_released(self) -> None:
+            self.updating_slider = False
+            if self.media_ready:
+                self.player.setPosition(self.scrubber.value())
+
+        def _set_field_to_position(self, field: QLineEdit) -> None:
+            if self.media_ready:
+                field.setText(format_timestamp(self.player.position() / 1000.0))
+
+        def _confirm_discard_or_save(self, action: str) -> bool:
+            if not self.dirty and not self.ranges:
+                return True
+            choice = QMessageBox.question(
+                self,
+                "Current ranges will be replaced",
+                f"Save the current ranges before {action}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice == QMessageBox.StandardButton.Cancel:
+                return False
+            if choice == QMessageBox.StandardButton.Yes:
+                return self.save_csv()
+            return True
+
+        def browse_output_csv(self) -> None:
+            if not self.media_ready:
+                QMessageBox.critical(self, "No video loaded", "Load a video before selecting a removal CSV.")
+                return
+            initial_dir = self.output_path.parent if self.output_path.parent.is_dir() else self.repository_root
+            dialog = QFileDialog(self, "Select removal CSV", str(initial_dir / self.output_path.name))
+            dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+            dialog.setNameFilter("CSV files (*.csv)")
+            dialog.setDefaultSuffix("csv")
+            dialog.setOption(QFileDialog.Option.DontConfirmOverwrite, True)
+            if dialog.exec() != QFileDialog.DialogCode.Accepted or not dialog.selectedFiles():
+                return
+            selected = dialog.selectedFiles()[0]
+            candidate = Path(selected).expanduser().resolve()
+            if candidate.suffix.lower() != ".csv":
+                QMessageBox.critical(self, "Invalid output file", "Choose a file with the .csv extension.")
+                return
+            if candidate.exists():
+                if not candidate.is_file():
+                    QMessageBox.critical(self, "Invalid output file", f"Not a file: {candidate}")
+                    return
+                try:
+                    imported = load_ranges(candidate, self.duration)
+                except (OSError, ValueError) as exc:
+                    QMessageBox.critical(self, "Could not load CSV", str(exc))
+                    return
+                if not self._confirm_discard_or_save("loading ranges from another CSV"):
+                    return
+                self.output_path = candidate
+                self.output_path_label.setText(f"CSV: {self.output_path}")
+                self.ranges = imported
+                self.next_uid = len(imported) + 1
+                self.selected_uid = None
+                self._refresh_ranges()
+                self.clear_fields()
+                self.dirty = False
+                self._set_status(f"Loaded {len(imported)} interval(s) from {candidate}")
+                return
+            self.output_path = candidate
+            self.output_path_label.setText(f"CSV: {self.output_path}")
+            self._set_status(f"New CSV destination selected: {candidate}")
+
+        def add_range(self) -> None:
+            self._create_or_update(None)
+
+        def update_range(self) -> None:
+            self._create_or_update(self.selected_uid)
+
+        def _create_or_update(self, uid: int | None) -> None:
+            if not self.media_ready:
+                return
+            try:
+                start = parse_timestamp(self.start_edit.text())
+                end = parse_timestamp(self.end_edit.text())
+            except ValueError as exc:
+                QMessageBox.critical(self, "Invalid time", str(exc))
+                return
+            if not (0 <= start < end <= self.duration):
+                QMessageBox.critical(
+                    self, "Invalid interval",
+                    f"Require 0 ≤ start < end ≤ video duration ({format_timestamp(self.duration)}).",
+                )
+                return
+            for existing in self.ranges:
+                if existing.uid != uid and start < existing.end and existing.start < end:
+                    QMessageBox.critical(
+                        self, "Overlapping interval",
+                        f"This interval overlaps {format_timestamp(existing.start)}–{format_timestamp(existing.end)}. "
+                        "Removal intervals must not overlap.",
+                    )
+                    return
+            comment = self.comment_edit.toPlainText()
+            if uid is None:
+                created_uid = self.next_uid
+                self.ranges.append(RemovalRange(created_uid, start, end, comment))
+                self.next_uid += 1
+            else:
+                created_uid = uid
+                existing = next((item for item in self.ranges if item.uid == uid), None)
+                if existing is None:
+                    QMessageBox.critical(self, "Selection changed", "Select a range and try again.")
+                    return
+                existing.start, existing.end, existing.comment = start, end, comment
+            self.ranges.sort(key=lambda item: (item.start, item.end))
+            self.dirty = True
+            self._refresh_ranges(select_uid=created_uid)
+            self._set_status("Range updated. Save CSV to keep these changes.")
+
+        def _refresh_ranges(self, select_uid: int | None = None) -> None:
+            self.table.setRowCount(0)
+            ordered = sorted(self.ranges, key=lambda item: (item.start, item.end))
+            for index, item in enumerate(ordered, start=1):
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                values = (str(index), format_timestamp(item.start), format_timestamp(item.end), item.comment)
+                for col, value in enumerate(values):
+                    cell = QTableWidgetItem(value)
+                    if col == 0:
+                        cell.setData(Qt.ItemDataRole.UserRole, item.uid)
+                    self.table.setItem(row, col, cell)
             self.selected_uid = None
-        self.update_button.configure(state="normal" if self.selected_uid is not None else "disabled")
-        self.remove_button.configure(state="normal" if self.selected_uid is not None else "disabled")
+            if select_uid is not None:
+                for row in range(self.table.rowCount()):
+                    if self.table.item(row, 0).data(Qt.ItemDataRole.UserRole) == select_uid:
+                        self.table.selectRow(row)
+                        self.selected_uid = select_uid
+                        break
+            self.update_button.setEnabled(self.selected_uid is not None)
+            self.remove_button.setEnabled(self.selected_uid is not None)
 
-    def on_select_range(self, _event: tk.Event | None = None) -> None:
-        selected = self.tree.selection()
-        if not selected:
+        def on_select_range(self) -> None:
+            selected = self.table.selectedItems()
+            if not selected:
+                self.selected_uid = None
+                self.update_button.setEnabled(False)
+                self.remove_button.setEnabled(False)
+                return
+            row = selected[0].row()
+            uid = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            item = next((entry for entry in self.ranges if entry.uid == uid), None)
+            if item is None:
+                return
+            self.selected_uid = item.uid
+            self.start_edit.setText(format_timestamp(item.start))
+            self.end_edit.setText(format_timestamp(item.end))
+            self.comment_edit.setPlainText(item.comment)
+            self.update_button.setEnabled(True)
+            self.remove_button.setEnabled(True)
+
+        def remove_range(self) -> None:
+            if self.selected_uid is None:
+                return
+            self.ranges = [item for item in self.ranges if item.uid != self.selected_uid]
             self.selected_uid = None
-            self.update_button.configure(state="disabled")
-            self.remove_button.configure(state="disabled")
-            return
-        self.selected_uid = int(selected[0])
-        item = next((row for row in self.ranges if row.uid == self.selected_uid), None)
-        if item is None:
-            return
-        self.start_var.set(format_timestamp(item.start))
-        self.end_var.set(format_timestamp(item.end))
-        self.comment_text.delete("1.0", "end")
-        self.comment_text.insert("1.0", item.comment)
-        self.update_button.configure(state="normal")
-        self.remove_button.configure(state="normal")
+            self.dirty = True
+            self._refresh_ranges()
+            self.clear_fields()
+            self._set_status("Range removed. Save CSV to keep these changes.")
 
-    def remove_range(self) -> None:
-        if self.selected_uid is None:
-            return
-        self.ranges = [item for item in self.ranges if item.uid != self.selected_uid]
-        self.selected_uid = None
-        self.dirty = True
-        self._refresh_ranges()
-        self.clear_fields()
-        self.status_var.set("Range removed. Save CSV to keep these changes.")
+        def clear_fields(self) -> None:
+            self.start_edit.clear()
+            self.end_edit.clear()
+            self.comment_edit.clear()
+            self.selected_uid = None
+            self.table.clearSelection()
+            self.update_button.setEnabled(False)
+            self.remove_button.setEnabled(False)
 
-    def clear_fields(self) -> None:
-        self.start_var.set("")
-        self.end_var.set("")
-        self.comment_text.delete("1.0", "end")
-        self.selected_uid = None
-        self.tree.selection_remove(*self.tree.selection())
-        self.update_button.configure(state="disabled")
-        self.remove_button.configure(state="disabled")
+        def save_csv(self) -> bool:
+            if not self.media_ready:
+                QMessageBox.critical(self, "No video loaded", "Load a video before saving intervals.")
+                return False
+            try:
+                save_ranges(self.output_path, self.ranges)
+            except OSError as exc:
+                QMessageBox.critical(self, "Could not save CSV", f"Destination: {self.output_path}\n\n{exc}")
+                return False
+            self.dirty = False
+            self._set_status(f"Saved {len(self.ranges)} interval(s) to {self.output_path}")
+            return True
 
-    def save_csv(self) -> bool:
-        if self.video is None:
-            messagebox.showerror("No video loaded", "Load a video before saving intervals.", parent=self.root)
-            return False
-        try:
-            save_ranges(self.output_path, self.ranges)
-        except OSError as exc:
-            messagebox.showerror(
-                "Could not save CSV", f"Destination: {self.output_path}\n\n{exc}", parent=self.root
-            )
-            return False
-        self.dirty = False
-        self.status_var.set(f"Saved {len(self.ranges)} interval(s) to {self.output_path}")
-        return True
+        def closeEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name.
+            if self.dirty:
+                choice = QMessageBox.question(
+                    self, "Unsaved removal ranges", "Save removal ranges before closing?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if choice == QMessageBox.StandardButton.Cancel:
+                    event.ignore()
+                    return
+                if choice == QMessageBox.StandardButton.Yes and not self.save_csv():
+                    event.ignore()
+                    return
+            self.player.stop()
+            event.accept()
+else:
+    class RemovalEditor:
+        """Placeholder used only when PySide6 is unavailable."""
 
-    def close(self) -> None:
-        if self.dirty:
-            choice = messagebox.askyesnocancel(
-                "Unsaved removal ranges", "Save removal ranges before closing?", parent=self.root
-            )
-            if choice is None:
-                return
-            if choice and not self.save_csv():
-                return
-        self.pause_playback()
-        self.seek_id += 1
-        self.preview_executor.shutdown(wait=False, cancel_futures=True)
-        self.root.destroy()
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("PySide6 is required to create the Step 08 GUI.")
 
 
 def main(repository_root: Path | None = None, argv: list[str] | None = None) -> int:
@@ -749,9 +723,16 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
     parser = argparse.ArgumentParser(description="Review a stitched video and mark intervals for later removal.")
     parser.add_argument("--video", help="Video to load (relative paths resolve from the repository root).")
     args = parser.parse_args(argv)
+    if QT_IMPORT_ERROR is not None:
+        print(
+            "Step 08 requires PySide6 Qt Multimedia. Activate the VideoStitcher environment and install it with "
+            "`conda install -n VideoStitcher --override-channels -c conda-forge opencv=4.13.0 pyside6 qt6-multimedia`.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         settings = load_settings(root_path)
-        ffmpeg, ffprobe, ffplay = _tools()
+        ffprobe = _ffprobe_tool()
         default_video = Path(args.video).expanduser() if args.video else (
             results_directory(settings, root_path) / "Step07_StitchedVideos"
             / f"{scenario_prefix(settings['ScenarioName'])}_Stitched.mp4"
@@ -762,26 +743,23 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
     except (StitchingError, OSError, ValueError) as exc:
         print(f"Step 08 could not start: {exc}", file=sys.stderr)
         return 1
+
     startup_error: str | None = None
     try:
         default_info = probe_video(ffprobe, default_video)
     except StitchingError as exc:
-        # Keep Browse available if the configured or explicitly requested path is invalid.
         default_info = None
         label = "specified" if args.video else "default"
         startup_error = f"Could not load {label} video {default_video}: {exc} Use Browse video… to select a file."
-    try:
-        window = tk.Tk()
-    except tk.TclError as exc:
-        print(f"Step 08 could not open its Tkinter window: {exc}", file=sys.stderr)
-        return 1
-    app = RemovalEditor(window, settings, root_path, ffmpeg, ffprobe, ffplay)
+
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    editor = RemovalEditor(settings, root_path, ffprobe)
     if default_info is not None:
-        app.load_video(default_info)
+        editor.load_video(default_info)
     elif startup_error:
-        app.status_var.set(startup_error)
-    window.mainloop()
-    return 0
+        editor._set_status(startup_error)
+    editor.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
