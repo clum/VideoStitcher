@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from fractions import Fraction
 from pathlib import Path
@@ -82,6 +83,16 @@ def _frame_rate(stream: dict[str, Any], path: Path) -> float:
     raise VideoConversionError(f"Could not determine a valid frame rate for {path}.")
 
 
+def _progress_seconds(value: str) -> float | None:
+    """Parse FFmpeg's ``HH:MM:SS.microseconds`` progress timestamp."""
+    try:
+        hours, minutes, seconds = value.split(":")
+        result = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    except (ValueError, TypeError):
+        return None
+    return result if math.isfinite(result) and result >= 0 else None
+
+
 def _target_rate(value: int | float) -> Fraction:
     if isinstance(value, bool):
         raise VideoConversionError("fps must be a positive finite number.")
@@ -108,6 +119,8 @@ def convert_video(
     fps: int | float = 10,
 ) -> Path:
     """Create a smaller H.264 copy, retaining audio streams and source duration.
+
+    FFmpeg progress is printed in place on the current terminal line.
 
     The output container is selected from ``output_path``'s extension. The
     source aspect ratio is preserved and letterboxed to the exact requested
@@ -177,6 +190,9 @@ def convert_video(
             "-loglevel",
             "error",
             "-nostdin",
+            "-progress",
+            "pipe:1",
+            "-nostats",
             "-y",
             "-i",
             str(source),
@@ -203,11 +219,48 @@ def convert_video(
             command.extend(["-c:a", "copy"])
         command.append(str(temporary_path))
         try:
-            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+            with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as error_output:
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=error_output,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                print(f"Converting video: {source}", flush=True)
+                last_percent = -1
+                assert process.stdout is not None
+                for line in process.stdout:
+                    key, separator, value = line.strip().partition("=")
+                    if not separator:
+                        continue
+                    if key == "out_time":
+                        elapsed = _progress_seconds(value)
+                    elif key == "out_time_ms":
+                        try:
+                            elapsed = int(value) / 1_000_000
+                        except ValueError:
+                            elapsed = None
+                    else:
+                        elapsed = None
+                    if elapsed is not None:
+                        percent = min(99, max(0, int(elapsed * 100 / source_duration)))
+                        if percent != last_percent:
+                            print(f"\rConversion progress: {percent:3d}%", end="", flush=True)
+                            last_percent = percent
+                    elif key == "progress" and value == "end":
+                        print("\rConversion progress: 100%", flush=True)
+                return_code = process.wait()
+                error_output.seek(0)
+                error_detail = error_output.read().strip()
         except OSError as exc:
             raise VideoConversionError(f"Could not start FFmpeg for {source}: {exc}") from exc
-        if result.returncode:
-            detail = result.stderr.strip() or f"FFmpeg exited with status {result.returncode}"
+        if return_code:
+            if last_percent >= 0:
+                print(file=sys.stdout)
+            detail = error_detail or f"FFmpeg exited with status {return_code}"
             raise VideoConversionError(
                 f"Could not convert {source} to {destination}: {detail}"
             )
