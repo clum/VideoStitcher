@@ -146,6 +146,46 @@ def parse_timestamp(value: str) -> float:
     return hours * 3600 + minutes * 60 + seconds + millis / 1000
 
 
+def load_ranges(path: Path, duration: float, first_uid: int = 1) -> list[RemovalRange]:
+    """Read and validate a complete Step 08 CSV before returning any ranges."""
+    expected_header = ["ID", "StartTime", "EndTime", "Comment"]
+    ranges: list[RemovalRange] = []
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.reader(file)
+            header = next(reader, None)
+            if header != expected_header:
+                raise ValueError("CSV header must be ID,StartTime,EndTime,Comment in that order.")
+            for row_number, row in enumerate(reader, start=2):
+                if len(row) != 4:
+                    raise ValueError(f"CSV row {row_number} must contain exactly four columns.")
+                try:
+                    incoming_id = int(row[0])
+                    if incoming_id <= 0:
+                        raise ValueError("ID must be a positive integer.")
+                    start = parse_timestamp(row[1])
+                    end = parse_timestamp(row[2])
+                except ValueError as exc:
+                    raise ValueError(f"CSV row {row_number}: {exc}") from exc
+                if not (0 <= start < end <= duration):
+                    raise ValueError(
+                        f"CSV row {row_number}: require 0 <= start < end <= video duration "
+                        f"({format_timestamp(duration)})."
+                    )
+                ranges.append(RemovalRange(first_uid + len(ranges), start, end, row[3]))
+    except (OSError, csv.Error) as exc:
+        raise ValueError(f"Could not read CSV {path}: {exc}") from exc
+
+    ranges.sort(key=lambda item: (item.start, item.end))
+    for previous, current in zip(ranges, ranges[1:]):
+        if current.start < previous.end:
+            raise ValueError(
+                f"Overlapping ranges: {format_timestamp(previous.start)}–{format_timestamp(previous.end)} "
+                f"overlaps {format_timestamp(current.start)}–{format_timestamp(current.end)}."
+            )
+    return ranges
+
+
 def save_ranges(path: Path, ranges: list[RemovalRange]) -> None:
     """Atomically replace a scenario CSV with validated, sorted range rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,9 +223,10 @@ class RemovalEditor:
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
         self.ffplay = ffplay
-        self.output_path = results_directory(settings, repository_root) / "Step08_IdentifyRemovals" / (
+        self.default_output_path = results_directory(settings, repository_root) / "Step08_IdentifyRemovals" / (
             f"{scenario_prefix(settings['ScenarioName'])}_RemovalSegments.csv"
         )
+        self.output_path = self.default_output_path
         self.video: VideoInfo | None = None
         self.ranges: list[RemovalRange] = []
         self.next_uid = 1
@@ -294,9 +335,16 @@ class RemovalEditor:
         bottom.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar(value="Load a video to identify intervals.")
         ttk.Label(bottom, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
-        ttk.Label(bottom, text=f"CSV: {self.output_path}", wraplength=900).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.output_path_var = tk.StringVar(value=f"CSV: {self.output_path}")
+        ttk.Label(bottom, textvariable=self.output_path_var, wraplength=900).grid(
+            row=1, column=0, sticky="w", pady=(3, 0)
+        )
+        self.browse_output_button = ttk.Button(
+            bottom, text="Browse CSV…", command=self.browse_output_csv, state="disabled"
+        )
+        self.browse_output_button.grid(row=1, column=1, sticky="e", padx=(8, 0))
         self.save_button = ttk.Button(bottom, text="Save CSV", command=self.save_csv, state="disabled")
-        self.save_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
+        self.save_button.grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 0))
 
     def browse_video(self) -> None:
         selected = filedialog.askopenfilename(title="Select stitched video", filetypes=VIDEO_FILTERS, parent=self.root)
@@ -314,6 +362,8 @@ class RemovalEditor:
     def load_video(self, video: VideoInfo) -> None:
         self.pause_playback()
         self.video = video
+        self.output_path = self.default_output_path
+        self.output_path_var.set(f"CSV: {self.output_path}")
         self.ranges.clear()
         self.next_uid = 1
         self.selected_uid = None
@@ -334,21 +384,72 @@ class RemovalEditor:
         self.play_button.configure(state="normal")
         self.add_button.configure(state="normal")
         self.save_button.configure(state="normal")
+        self.browse_output_button.configure(state="normal")
         self.clock_var.set(f"{format_timestamp(0)} / {format_timestamp(video.duration)}")
         self.status_var.set("Ready. Mark a start and end time, then add a range.")
         self.request_preview(0.0)
 
-    def _confirm_discard_or_save(self) -> bool:
-        if not self.dirty:
+    def _confirm_discard_or_save(self, action: str = "loading another video") -> bool:
+        if not self.dirty and not self.ranges:
             return True
         choice = messagebox.askyesnocancel(
-            "Unsaved removal ranges", "Save the current ranges before loading another video?", parent=self.root
+            "Current ranges will be replaced",
+            f"Save the current ranges before {action}?",
+            parent=self.root,
         )
         if choice is None:
             return False
         if choice:
             return self.save_csv()
         return True
+
+    def browse_output_csv(self) -> None:
+        if self.video is None:
+            messagebox.showerror("No video loaded", "Load a video before selecting a removal CSV.", parent=self.root)
+            return
+        selected = filedialog.asksaveasfilename(
+            title="Select removal CSV",
+            parent=self.root,
+            initialdir=str(
+                self.output_path.parent if self.output_path.parent.is_dir() else self.repository_root
+            ),
+            initialfile=self.output_path.name,
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            confirmoverwrite=False,
+        )
+        if not selected:
+            return
+        candidate = Path(selected).expanduser().resolve()
+        if candidate.suffix.lower() != ".csv":
+            messagebox.showerror("Invalid output file", "Choose a file with the .csv extension.", parent=self.root)
+            return
+
+        if candidate.exists():
+            if not candidate.is_file():
+                messagebox.showerror("Invalid output file", f"Not a file: {candidate}", parent=self.root)
+                return
+            try:
+                imported = load_ranges(candidate, self.video.duration)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Could not load CSV", str(exc), parent=self.root)
+                return
+            if not self._confirm_discard_or_save("loading ranges from another CSV"):
+                return
+            self.output_path = candidate
+            self.output_path_var.set(f"CSV: {self.output_path}")
+            self.ranges = imported
+            self.next_uid = len(imported) + 1
+            self.selected_uid = None
+            self._refresh_ranges()
+            self.clear_fields()
+            self.dirty = False
+            self.status_var.set(f"Loaded {len(imported)} interval(s) from {candidate}")
+            return
+
+        self.output_path = candidate
+        self.output_path_var.set(f"CSV: {self.output_path}")
+        self.status_var.set(f"New CSV destination selected: {candidate}")
 
     def set_field_to_position(self, variable: tk.StringVar) -> None:
         if self.video is not None:
