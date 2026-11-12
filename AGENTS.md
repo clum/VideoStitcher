@@ -10,6 +10,7 @@
 - Read `AGENTS_Step07.md` when implementing video stitching.
 - Read `AGENTS_Step07b.md` when converting a video to a lower resolution or frame rate.
 - Read `AGENTS_Step08.md` when implementing removal-range identification.
+- Read `AGENTS_Step08b.md` when removing video sections identified by Step 08.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
