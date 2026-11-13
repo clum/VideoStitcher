@@ -86,6 +86,11 @@ def _save_homography(
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compute the Step 05 homography from Step 04 points.")
     parser.add_argument(
+        "--settings",
+        type=Path,
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
+    )
+    parser.add_argument(
         "--coordinates",
         type=Path,
         help="Step 04 coordinate JSON (default: newest record for the configured scenario).",
@@ -96,7 +101,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def run(repository_root: Path, argv: Sequence[str] | None = None) -> Path:
     args = _parse_args(argv)
     root = repository_root.resolve()
-    settings = load_settings(root)
+    settings = load_settings(root, args.settings)
     coordinate_path = resolve_coordinate_record(settings, root, args.coordinates)
     coordinates = load_coordinate_data(coordinate_path, settings, root)
     matrix, inliers = _estimate_homography(coordinates.left_points, coordinates.right_points)

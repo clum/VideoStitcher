@@ -31,14 +31,18 @@ class CoordinateData:
     right_points: np.ndarray
 
 
-def load_settings(repository_root: Path) -> dict[str, Any]:
-    settings_path = repository_root / "settings.json"
+def load_settings(repository_root: Path, settings_path: Path | None = None) -> dict[str, Any]:
+    settings_path = settings_path or (repository_root / "settings.json")
+    settings_path = settings_path.expanduser()
+    if not settings_path.is_absolute():
+        settings_path = repository_root / settings_path
+    settings_path = settings_path.resolve()
     try:
-        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError as exc:
         raise StitchingError(f"Settings file not found: {settings_path}") from exc
     except json.JSONDecodeError as exc:
-        raise StitchingError(f"Settings file is not valid JSON: {exc}") from exc
+        raise StitchingError(f"Settings file {settings_path} is not valid JSON: {exc}") from exc
     except OSError as exc:
         raise StitchingError(f"Could not read settings file {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
