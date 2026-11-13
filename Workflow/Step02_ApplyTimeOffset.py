@@ -1,4 +1,4 @@
-"""Launch the Video Stitcher with ``python Workflow/Step02ApplyTimeOffset.py``."""
+"""Launch the Video Stitcher with ``python Workflow/Step02_ApplyTimeOffset.py``."""
 
 import sys
 from pathlib import Path

@@ -1,5 +1,6 @@
 """Tkinter interface for manually aligning two video and audio recordings."""
 
+import argparse
 import base64
 import json
 import subprocess
@@ -9,13 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import Sequence
 
 from .alignment import Alignment, calculate_alignment
 from .export import export_aligned_pair
 from .media import MediaInfo, audio_peaks, frame_png, probe, require_tools
-from .workflow_paths import combined_video_path, results_directory
+from .workflow_paths import combined_video_path, results_directory, scenario_prefix
 
-SETTINGS_PATH = Path(__file__).resolve().parents[2] / "settings.json"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SETTINGS_PATH = REPOSITORY_ROOT / "settings.json"
 
 
 def _seconds(value: Fraction) -> str:
@@ -32,8 +35,9 @@ def _clock(value: Fraction) -> str:
 
 
 class VideoStitcherApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, settings_path: Path = DEFAULT_SETTINGS_PATH) -> None:
         self.root = root
+        self.settings_path = settings_path.resolve()
         root.title("Video Stitcher — Manual Alignment")
         root.minsize(1000, 760)
         self.media: list[MediaInfo | None] = [None, None]
@@ -127,7 +131,7 @@ class VideoStitcherApp:
         self.offset_label.pack(anchor="w")
         self.result_label = ttk.Label(align_frame, text="Choose both videos to calculate shared trims.", justify="left")
         self.result_label.pack(anchor="w", pady=(6, 0))
-        self.save_offset_button = ttk.Button(align_frame, text="Save offset to settings", command=self.save_offset)
+        self.save_offset_button = ttk.Button(align_frame, text="Save offset", command=self.save_offset)
         self.save_offset_button.pack(anchor="e", pady=(4, 0))
         self.export_button = ttk.Button(align_frame, text="Create aligned clips", command=self.start_export, state="disabled")
         self.export_button.pack(anchor="e", pady=(4, 0))
@@ -193,31 +197,44 @@ class VideoStitcherApp:
     def load_settings_files(self) -> None:
         """Load configured inputs without opening file chooser dialogs."""
         try:
-            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+            with self.settings_path.open("r", encoding="utf-8") as settings_file:
                 settings = json.load(settings_file)
             if not isinstance(settings, dict):
                 raise ValueError("The settings file must contain a JSON object.")
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             self.status.configure(text=f"Could not read settings.json: {exc}")
-            messagebox.showerror("Settings error", f"Could not read {SETTINGS_PATH}:\n{exc}", parent=self.root)
+            messagebox.showerror("Settings error", f"Could not read {self.settings_path}:\n{exc}", parent=self.root)
             return
 
         scenario = str(settings.get("ScenarioName", "")).strip()
         if scenario:
             self.root.title(f"Video Stitcher — {scenario}")
 
-        configured_offset = settings.get("CameraBOffset_s", 0.0)
+        try:
+            offset_path = self._offset_json_path(settings)
+            if offset_path.is_file():
+                offset_data = json.loads(offset_path.read_text(encoding="utf-8"))
+                if not isinstance(offset_data, dict):
+                    raise ValueError("The offset file must contain a JSON object.")
+                if offset_data.get("ScenarioName") != scenario:
+                    raise ValueError("The offset file scenario does not match settings.json.")
+                configured_offset = offset_data.get("CameraBOffset_s", 0.0)
+            else:
+                configured_offset = 0.0
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            configured_offset = 0.0
+            self.status.configure(text=f"Could not read saved Step 02 offset; using 0 seconds: {exc}")
         try:
             if isinstance(configured_offset, bool):
                 raise ValueError
             self.offset = Fraction(str(configured_offset))
         except (ValueError, ZeroDivisionError):
             self.offset = Fraction(0)
-            self.status.configure(text="CameraBOffset_s is invalid; using 0 seconds.")
+            self.status.configure(text="Saved CameraBOffset_s is invalid; using 0 seconds.")
 
         for index, camera_key in enumerate(("CameraA", "CameraB")):
             try:
-                path = combined_video_path(settings, camera_key, SETTINGS_PATH.parent)
+                path = combined_video_path(settings, camera_key, REPOSITORY_ROOT)
                 info = probe(path)
             except Exception as exc:
                 self.status.configure(text=f"Could not load {camera_key} combined video: {exc}")
@@ -413,18 +430,35 @@ class VideoStitcherApp:
 
     def save_offset(self) -> None:
         try:
-            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+            with self.settings_path.open("r", encoding="utf-8") as settings_file:
                 settings = json.load(settings_file)
             if not isinstance(settings, dict):
                 raise ValueError("The settings file must contain a JSON object.")
-            settings["CameraBOffset_s"] = float(self.offset)
-            temporary_path = SETTINGS_PATH.with_suffix(".json.tmp")
-            temporary_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-            temporary_path.replace(SETTINGS_PATH)
+            offset_path = self._offset_json_path(settings)
+            offset_path.parent.mkdir(parents=True, exist_ok=True)
+            offset_data = {
+                "ScenarioName": str(settings["ScenarioName"]).strip(),
+                "CameraBOffset_s": float(self.offset),
+            }
+            temporary_path = offset_path.with_suffix(offset_path.suffix + ".tmp")
+            temporary_path.write_text(json.dumps(offset_data, indent=2) + "\n", encoding="utf-8")
+            temporary_path.replace(offset_path)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            messagebox.showerror("Could not save offset", f"Could not update {SETTINGS_PATH}:\n{exc}", parent=self.root)
+            messagebox.showerror(
+                "Could not save offset",
+                f"Could not save the offset JSON under the Step 02 output folder:\n{exc}",
+                parent=self.root,
+            )
             return
-        self.status.configure(text=f"Saved signed offset {_seconds(self.offset)} seconds to settings.json.")
+        self.status.configure(text=f"Saved signed offset {_seconds(self.offset)} seconds to {offset_path}.")
+
+    @staticmethod
+    def _offset_json_path(settings: dict) -> Path:
+        scenario = str(settings.get("ScenarioName", "")).strip()
+        if not scenario:
+            raise ValueError("Set ScenarioName in settings.json before loading or saving the offset.")
+        output_dir = results_directory(settings, REPOSITORY_ROOT) / "Step02_AlignedVideos"
+        return output_dir / f"{scenario_prefix(scenario)}_TimeOffset.json"
 
     def start_export(self) -> None:
         if not all(self.media):
@@ -436,7 +470,7 @@ class VideoStitcherApp:
         self.export_progress_text.configure(text="Preparing aligned clip export…")
         self.status.configure(text="Preparing full-length aligned clip exports from the configured source files…")
         try:
-            with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
+            with self.settings_path.open("r", encoding="utf-8") as settings_file:
                 settings = json.load(settings_file)
             if not isinstance(settings, dict):
                 raise ValueError("The settings file must contain a JSON object.")
@@ -444,10 +478,10 @@ class VideoStitcherApp:
             if not scenario:
                 raise ValueError("Set ScenarioName in settings.json before exporting.")
             configured_media = [
-                probe(combined_video_path(settings, camera, SETTINGS_PATH.parent))
+                probe(combined_video_path(settings, camera, REPOSITORY_ROOT))
                 for camera in ("CameraA", "CameraB")
             ]
-            output_dir = results_directory(settings, SETTINGS_PATH.parent) / "Step02_AlignedVideos"
+            output_dir = results_directory(settings, REPOSITORY_ROOT) / "Step02_AlignedVideos"
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             self.export_in_progress = False
             self._update_export_button()
@@ -578,7 +612,18 @@ class VideoStitcherApp:
         self.root.destroy()
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Manually align two videos by adjusting Camera B's time offset.")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        default=DEFAULT_SETTINGS_PATH,
+        help="Settings JSON path (relative paths resolve from the repository root; default: settings.json).",
+    )
+    args = parser.parse_args(argv)
+    settings_path = args.settings.expanduser()
+    if not settings_path.is_absolute():
+        settings_path = REPOSITORY_ROOT / settings_path
     try:
         require_tools()
     except RuntimeError as exc:
@@ -588,6 +633,6 @@ def main() -> int:
         root.destroy()
         return 1
     root = tk.Tk()
-    VideoStitcherApp(root)
+    VideoStitcherApp(root, settings_path.resolve())
     root.mainloop()
     return 0

@@ -6,20 +6,20 @@ Build a Python desktop application that helps a user manually align two recordin
 
 ## Inputs
 
-- Read the repository-root `settings.json`, including `ScenarioName`, `ResultsDirectory`, and the initial `CameraBOffset_s` value.
+- By default, read the repository-root `settings.json` for `ScenarioName` and `ResultsDirectory`. Accept `--settings PATH` to load another settings JSON; relative paths resolve from the repository root. Use the selected file consistently for startup, saving the offset, and preparing exports. Load the initial `CameraBOffset_s` from `ResultsDirectory/Step02_AlignedVideos/{ScenarioName}_TimeOffset.json` when present; otherwise start at zero seconds. Do not read or write `CameraBOffset_s` in `settings.json`.
 - By default, load `{ScenarioName}_CameraA` and `{ScenarioName}_CameraB` from `ResultsDirectory/Step01_CombinedVideos/`, using the sanitized scenario prefix and the source extension. Run Step 01 first if either default input is missing.
 - Allow the user to browse for different input videos during the session. Show the resolved input paths and preserve all source files.
 - Resolve relative result paths from the repository root. Report missing, unreadable, or unsupported media clearly, including when either video lacks audio.
 
 ## User workflow
 
-1. On startup, read the repository-root `settings.json` and locate each combined input in `ResultsDirectory/Step01_CombinedVideos/` using the sanitized `ScenarioName` and camera name. Resolve relative `ResultsDirectory` values from the repository root. Show the full resolved path for each input in the interface. Load `CameraBOffset_s` as the initial signed offset. Keep controls for changing either input during the session. Do not modify source files. Run Step 01 first if the combined inputs do not exist.
+1. On startup, read the repository-root `settings.json` and locate each combined input in `ResultsDirectory/Step01_CombinedVideos/` using the sanitized `ScenarioName` and camera name. Resolve relative `ResultsDirectory` values from the repository root. Show the full resolved path for each input in the interface. Load `CameraBOffset_s` from `{ScenarioName}_TimeOffset.json` in the Step 02 output folder as the initial signed offset; use zero if the file does not exist. Keep controls for changing either input during the session. Do not modify source files. Run Step 01 first if the combined inputs do not exist.
 2. Read each file's duration, frame rate or timestamp information, dimensions, and audio stream availability. Show clear errors for unreadable files and warn when either clip has no audio.
    - Limit interactive preview and manual alignment to the first 30 seconds of each file. Show the user that the rest of each source clip is outside the current review window. Export still uses each configured source file's full duration.
 3. Display both videos and their audio waveforms in a common timeline. Make the waveforms easy to compare, with distinct styles or colors for A and B. Provide a timeline zoom control centered on the current playhead so the user can make fine alignment adjustments. Allow the user to drag the second clip earlier or later relative to the first. Moving the second clip must move its video and audio waveform together. Keep the reference clip fixed.
 4. Let the user play or scrub both clips while they are aligned on the timeline, so visual events and sound can be compared. Show the current offset with sufficient precision and make the drag interaction usable for fine adjustments.
 5. Once the user accepts the alignment, calculate and report the interactive 30-second review overlap. For export, calculate the shared interval and start/end crop amounts against both original files' full durations. Both output clips must cover the same event interval, and their final encoded durations must differ by no more than 1 second.
-6. Present the result clearly, with the signed offset in seconds and a human-readable time format. Let the user save the current offset to `CameraBOffset_s` in the repository-root `settings.json`, preserving the other settings.
+6. Present the result clearly, with the signed offset in seconds and a human-readable time format. Let the user save the current offset to the scenario's Step 02 JSON file.
 7. Provide a control to export the current alignment. Apply the current signed offset to B, use the full durations of the combined Step 01 inputs, crop A and B to their shared interval, and write an MP4 pair under `ResultsDirectory/Step02_AlignedVideos/`. Prefix both filenames with the sanitized `ScenarioName` from `settings.json`. Reuse `{ScenarioName}_CameraA_Aligned.mp4` and `{ScenarioName}_CameraB_Aligned.mp4` on every run, replacing that pair only after both temporary outputs are encoded and validated. Accept final video durations that differ by up to and including 1 second; fail validation if the difference is greater than 1 second and retain the previous output pair. Preserve unrelated files and numbered legacy variants. The 30-second limit applies only to interactive alignment and preview, not to export.
 
 ## Offset and crop conventions
@@ -38,7 +38,7 @@ Build a Python desktop application that helps a user manually align two recordin
 ## Product and implementation guidance
 
 - Keep the interface focused on selecting two files, comparing synchronized playback, adjusting the second clip, and reading the resulting offset and trims.
-- Keep the Step 02 launcher at `Workflow/Step02ApplyTimeOffset.py`; it invokes the main application entry point.
+- Keep the Step 02 launcher at `Workflow/Step02_ApplyTimeOffset.py`; it invokes the main application entry point.
 - Encapsulate application behavior in callable Python scripts, functions, classes, and/or libraries. Store this code under `Utilities/` in an organized package structure, with the user interface calling reusable functionality where practical.
 - Define a stable main application entry point that can be called from the Step 02 launcher and normal application startup.
 - Show determinate export progress from FFmpeg's encoded timestamps across both outputs, reaching 100% only after validation and publishing succeed.
@@ -54,7 +54,7 @@ Build a Python desktop application that helps a user manually align two recordin
 
 ## Output
 
-- Save the accepted signed offset to `CameraBOffset_s` in the repository-root `settings.json`, preserving other settings.
+- Save a JSON object containing `ScenarioName` and `CameraBOffset_s` to `ResultsDirectory/Step02_AlignedVideos/{ScenarioName}_TimeOffset.json`, using the sanitized scenario prefix. Create the Step 02 output folder if needed. Save atomically so a failed write does not corrupt a previous offset file.
 - Export both aligned videos to `ResultsDirectory/Step02_AlignedVideos/` as `{ScenarioName}_CameraA_Aligned.mp4` and `{ScenarioName}_CameraB_Aligned.mp4`, using the sanitized scenario prefix.
 - Both videos must cover the same shared event interval. Encode at the same frame rate and frame count; their probed durations may differ by at most 1 second.
 - Stage and validate both outputs before replacing the existing pair. Preserve source media and unrelated output files.
@@ -64,14 +64,22 @@ Build a Python desktop application that helps a user manually align two recordin
 Activate the `VideoStitcher` Conda environment and run from the repository root:
 
 ```powershell
-python Workflow/Step02ApplyTimeOffset.py
+python Workflow/Step02_ApplyTimeOffset.py
 ```
+
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step02_ApplyTimeOffset.py --settings "path/to/settings.json"
+```
+
+Absolute settings paths are also accepted. Relative `ResultsDirectory` values in the selected file resolve from the repository root.
 
 ## Validation and failure handling
 
 - Report when the selected offset leaves no shared interval; do not present invalid trims or export misaligned outputs.
 - Handle media probing, playback, seeking, export, and settings write errors with actionable messages. Failed exports must retain the prior aligned pair and include the FFmpeg diagnostic log path and recent error details.
-- Do not modify source videos. Preserve other settings when saving the offset, and preserve unrelated files when publishing outputs.
+- Do not modify source videos or `settings.json` when saving the offset. Preserve unrelated files when publishing outputs.
 
 ## Completion criteria
 
