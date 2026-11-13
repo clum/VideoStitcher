@@ -205,6 +205,11 @@ def _publish_images(
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply the homography computed by Step 05.")
     parser.add_argument(
+        "--settings",
+        type=Path,
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
+    )
+    parser.add_argument(
         "--overlap-mode",
         choices=("left", "blend"),
         default="left",
@@ -217,7 +222,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
     root = (repository_root or Path(__file__).resolve().parents[2]).resolve()
     args = _parse_args(argv)
     try:
-        settings = load_settings(root)
+        settings = load_settings(root, args.settings)
         homography, coordinates_path, artifact_path = _load_homography(settings, root)
         coordinates = load_coordinate_data(coordinates_path, settings, root)
         left, right = load_coordinate_images(coordinates)

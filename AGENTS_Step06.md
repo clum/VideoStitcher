@@ -6,7 +6,7 @@ Apply the homography computed in Step 05 to the corresponding right image, creat
 
 ## Inputs
 
-- Read the repository-root `settings.json` and resolve `ResultsDirectory` using the shared workflow path rules.
+- By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for homography lookup and Step 06 output. Relative `ResultsDirectory` paths resolve from the repository root.
 - Load `ResultsDirectory/Step05_Homography/{ScenarioName}_Homography.json`. Require a matching scenario, finite invertible 3x3 `HomographyMatrix`, and valid `CoordinateRecordPath`.
 - Load the exact Step 04 coordinate record referenced by the homography artifact. Validate scenario, point pairs, image paths, recorded dimensions, and point bounds; decode both images and ensure actual dimensions match the record.
 - The matrix maps right-image pixels to left-image coordinates. Use it directly unless its projective horizon crosses the right image; in that case use the established RANSAC similarity-transform fallback for rendering to avoid a disconnected full-frame warp.
@@ -30,6 +30,18 @@ Select overlap blending with:
 
 ```powershell
 python Workflow/Step06_StitchImages.py --overlap-mode blend
+```
+
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step06_StitchImages.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+```
+
+Options can be combined, for example:
+
+```powershell
+python Workflow/Step06_StitchImages.py --settings "settings_26_11_01_Soccer_WssaU14.json" --overlap-mode blend
 ```
 
 ## Failure handling
