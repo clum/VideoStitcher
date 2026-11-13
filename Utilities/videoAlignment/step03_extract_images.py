@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from .workflow_paths import results_directory, scenario_prefix
 
@@ -98,6 +99,13 @@ def _probe_source(ffprobe: str, camera: str, path: Path) -> VideoSource:
     except (ValueError, TypeError, KeyError, StopIteration, ZeroDivisionError) as exc:
         raise Step03Error(f"Could not determine {camera} video duration or dimensions: {path}") from exc
     return VideoSource(camera, path, width, height, duration, start_time)
+
+
+def _resolve_video_override(path: Path | None, repository_root: Path) -> Path | None:
+    if path is None:
+        return None
+    expanded = path.expanduser()
+    return (expanded if expanded.is_absolute() else repository_root / expanded).resolve()
 
 
 def _timestamp_text(value: Fraction) -> str:
@@ -248,7 +256,12 @@ def _publish_set(staged_images: Path, output_dir: Path, filenames: list[str], ba
         raise Step03Error(f"Could not publish the complete Step 03 image set: {exc}.{details}") from exc
 
 
-def extract_aligned_images(settings: dict[str, Any], repository_root: Path) -> list[Path]:
+def extract_aligned_images(
+    settings: dict[str, Any],
+    repository_root: Path,
+    camera_a_path: Path | None = None,
+    camera_b_path: Path | None = None,
+) -> list[Path]:
     """Extract and transactionally publish all 30 Step 03 images."""
     ffmpeg, ffprobe = _required_tools()
     scenario = settings.get("ScenarioName")
@@ -257,10 +270,16 @@ def extract_aligned_images(settings: dict[str, Any], repository_root: Path) -> l
     prefix = scenario_prefix(scenario.strip())
     output_dir = results_directory(settings, repository_root) / "Step03_ExtractedImages"
     source_dir = results_directory(settings, repository_root) / "Step02_AlignedVideos"
-    sources = [
-        _probe_source(ffprobe, camera, source_dir / f"{prefix}_{camera}_Aligned.mp4")
-        for camera in ("CameraA", "CameraB")
-    ]
+    requested_paths = {
+        "CameraA": _resolve_video_override(camera_a_path, repository_root),
+        "CameraB": _resolve_video_override(camera_b_path, repository_root),
+    }
+    sources = []
+    for camera in ("CameraA", "CameraB"):
+        path = requested_paths[camera] or source_dir / f"{prefix}_{camera}_Aligned.mp4"
+        source = _probe_source(ffprobe, camera, path)
+        sources.append(source)
+        print(f"{camera} input video: {source.path}")
 
     selections: list[FrameSelection] = []
     for source in sources:
@@ -310,15 +329,36 @@ def extract_aligned_images(settings: dict[str, Any], repository_root: Path) -> l
     return [output_dir / filename for filename in filenames]
 
 
-def main(repository_root: Path | None = None) -> int:
+def main(repository_root: Path | None = None, argv: Sequence[str] | None = None) -> int:
     root = (repository_root or Path(__file__).resolve().parents[2]).resolve()
-    settings_path = root / "settings.json"
+    parser = argparse.ArgumentParser(description="Extract representative stills from Step 02 aligned videos.")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        default=root / "settings.json",
+        help="Settings JSON path (relative paths resolve from the repository root; default: settings.json).",
+    )
+    parser.add_argument(
+        "--camera-a",
+        type=Path,
+        help="Override the Camera A video input; relative paths resolve from the repository root.",
+    )
+    parser.add_argument(
+        "--camera-b",
+        type=Path,
+        help="Override the Camera B video input; relative paths resolve from the repository root.",
+    )
+    args = parser.parse_args(argv)
+    settings_path = args.settings.expanduser()
+    if not settings_path.is_absolute():
+        settings_path = root / settings_path
+    settings_path = settings_path.resolve()
     try:
         with settings_path.open("r", encoding="utf-8") as settings_file:
             settings = json.load(settings_file)
         if not isinstance(settings, dict):
             raise Step03Error("settings.json must contain a JSON object.")
-        outputs = extract_aligned_images(settings, root)
+        outputs = extract_aligned_images(settings, root, args.camera_a, args.camera_b)
     except (OSError, json.JSONDecodeError, Step03Error, ValueError) as exc:
         print(f"Step 03 failed: {exc}")
         return 1

@@ -6,11 +6,12 @@ Extract representative still frames from both Step 02 aligned videos so the user
 
 ## Inputs
 
-- Read the repository-root `settings.json`.
+- By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root.
 - Resolve `ResultsDirectory` from the repository root when it is relative.
 - Read the fixed Step 02 outputs from `ResultsDirectory/Step02_AlignedVideos/`:
   - `{ScenarioName}_CameraA_Aligned.mp4`
   - `{ScenarioName}_CameraB_Aligned.mp4`
+- Accept `--camera-a PATH` and `--camera-b PATH` to override either input independently. Unspecified inputs continue to use their configured Step 02 default. Relative override paths resolve from the repository root.
 - Use the sanitized `ScenarioName` convention shared by the other workflow steps.
 
 ## Extraction behavior
@@ -29,6 +30,33 @@ Extract representative still frames from both Step 02 aligned videos so the user
 - Stage and validate the complete set before publishing it. Repeated runs reuse the same 30 filenames and replace only those Step 03 outputs; preserve source videos and unrelated files in the results folder.
 - Create `Workflow/Step03_ExtractAlignedImages.py` as the runnable script that executes this workflow from the repository root with `python Workflow/Step03_ExtractAlignedImages.py`.
 - Keep reusable extraction logic under `Utilities/`; the workflow script should call that reusable implementation.
+
+## Run
+
+Activate the `VideoStitcher` Conda environment and run from the repository root:
+
+```powershell
+conda activate VideoStitcher
+python Workflow/Step03_ExtractAlignedImages.py
+```
+
+Override one video input:
+
+```powershell
+python Workflow/Step03_ExtractAlignedImages.py --camera-a "path/to/camera_a.mp4"
+```
+
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step03_ExtractAlignedImages.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+```
+
+Override both inputs:
+
+```powershell
+python Workflow/Step03_ExtractAlignedImages.py --camera-a "path/to/left.mp4" --camera-b "path/to/right.mp4"
+```
 
 ## Acceptance criteria
 
