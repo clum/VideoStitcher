@@ -6,6 +6,7 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 
 ## Inputs
 
+- Show the active settings JSON path in the GUI and provide a Browse control so the user can select the file used to resolve `ResultsDirectory` and `ScenarioName`. Start with the repository-root `settings.json`; validate the selected JSON, non-empty `ScenarioName`, and resolvable `ResultsDirectory` before accepting it.
 - Let the user browse independently for the left image and the right image. Do not require fixed filenames or a preselected Step 03 timestamp pair.
 - Support common raster image formats available through the chosen image-loading library, including JPEG, PNG, and BMP. The file picker should use suitable image filters while allowing the user to select all files if needed.
 - Use the installed OpenCV Python bindings (`cv2`) to decode and scale the supported images.
@@ -23,7 +24,7 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 
 ## Outputs and persistence
 
-- Save coordinate records as JSON in `ResultsDirectory/Step04_ImageCoordinates/`, resolving a relative `ResultsDirectory` from the repository root as other workflow steps do. Read the repository-root `settings.json` for the configured results directory; if it cannot be read or resolved, show an actionable error.
+- Save coordinate records as JSON in `ResultsDirectory/Step04_ImageCoordinates/`, resolving a relative `ResultsDirectory` from the repository root as other workflow steps do. Use the currently selected settings JSON for the configured results directory and scenario; if it cannot be read or resolved, show an actionable error.
 - Include each selected image path, original image width and height, and its ordered list of integer `{ "x": ..., "y": ... }` coordinates. Include a unique timestamp in the filename to avoid overwriting unrelated records; because inputs are user-selected files, do not assume their names follow Step 03 conventions.
 - Provide an explicit save action. Do not save incomplete records silently. If either image is missing or has no points, explain what is missing and do not write a partial record.
 - Create the output folder as needed. On write failure, report the destination and error without modifying the source images.
@@ -36,6 +37,15 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 - Keep the GUI responsive during ordinary image loading and saving. Show errors in the interface and retain the last valid display when a replacement file is invalid.
 - Close the application cleanly without changing input files.
 
+## Run
+
+Activate the `VideoStitcher` Conda environment and run from the repository root:
+
+```powershell
+conda activate VideoStitcher
+python Workflow/Step04_SelectImageCoordinates.py
+```
+
 ## Acceptance criteria
 
 - The user can browse independently for left and right images, see both images at once, and select either one first.
@@ -43,5 +53,6 @@ Provide a small desktop GUI for selecting one point in each of two images. Recor
 - Every valid click adds a marker and coordinate to the corresponding side's ordered list without removing earlier points. Replacing one side's image clears only that side's points.
 - The user can select and remove any listed point or modify its location; the coordinate list and displayed marker stay synchronized after edits.
 - Saving a complete pair writes a valid JSON record under `ResultsDirectory/Step04_ImageCoordinates/` with both paths, dimensions, and ordered coordinate lists. Missing inputs, empty point lists, failed image reads, and failed writes produce actionable errors.
+- The settings-file Browse control displays the active path, rejects invalid settings without changing the current selection, and saves coordinate records under the selected file's `ResultsDirectory`.
 - Exporting a valid coordinate JSON writes both image paths and their corresponding ordered point lists as `[x, y],` lines in a text file; malformed JSON or failed writes produce an actionable error.
 - The workflow can be started from the repository root with `python Workflow/Step04_SelectImageCoordinates.py`; reusable logic resides under `Utilities/`.

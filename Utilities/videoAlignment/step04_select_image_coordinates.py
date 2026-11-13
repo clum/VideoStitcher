@@ -256,8 +256,20 @@ class ImageCoordinateApp:
     def __init__(self, root: Tk, repository_root: Path) -> None:
         self.root = root
         self.repository_root = repository_root
+        self.settings_path = repository_root / "settings.json"
         root.title("Video Stitcher — Select Image Coordinates")
         root.minsize(900, 650)
+
+        settings_frame = ttk.Frame(root, padding=(10, 8, 10, 2))
+        settings_frame.pack(fill="x")
+        ttk.Label(settings_frame, text="Settings JSON:").pack(side="left", padx=(0, 6))
+        self.settings_path_var = StringVar(value=str(self.settings_path))
+        ttk.Label(settings_frame, textvariable=self.settings_path_var, anchor="w").pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Button(settings_frame, text="Browse settings...", command=self.browse_settings).pack(
+            side="right", padx=(8, 0)
+        )
 
         self.panels = ttk.Frame(root, padding=10)
         self.panels.pack(fill="both", expand=True)
@@ -278,6 +290,37 @@ class ImageCoordinateApp:
 
     def set_status(self, message: str) -> None:
         self.status_var.set(message)
+
+    def browse_settings(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select settings JSON",
+            initialdir=str(self.settings_path.parent),
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*")),
+            parent=self.root,
+        )
+        if not selected:
+            return
+        candidate = Path(selected).expanduser().resolve()
+        try:
+            settings = json.loads(candidate.read_text(encoding="utf-8-sig"))
+            if not isinstance(settings, dict):
+                raise ValueError("The settings file must contain a JSON object.")
+            scenario = settings.get("ScenarioName")
+            if not isinstance(scenario, str) or not scenario.strip():
+                raise ValueError("Set a non-empty ScenarioName in the selected settings file.")
+            scenario_prefix(scenario)
+            output_dir = results_directory(settings, self.repository_root) / "Step04_ImageCoordinates"
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            messagebox.showerror(
+                "Invalid settings file",
+                f"Could not use settings file:\n{candidate}\n\n{exc}",
+                parent=self.root,
+            )
+            return
+
+        self.settings_path = candidate
+        self.settings_path_var.set(str(candidate))
+        self.set_status(f"Using settings for {scenario.strip()}; coordinate records will be saved in: {output_dir}")
 
     def export_coordinates(self) -> None:
         json_name = filedialog.askopenfilename(
@@ -322,15 +365,17 @@ class ImageCoordinateApp:
             messagebox.showwarning("Incomplete coordinates", "\n".join(details), parent=self.root)
             return
 
-        settings_path = self.repository_root / "settings.json"
+        settings_path = self.settings_path
         try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-            output_dir = results_directory(settings, self.repository_root) / "Step04_ImageCoordinates"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+            if not isinstance(settings, dict):
+                raise ValueError("The selected settings file must contain a JSON object.")
             scenario_value = settings.get("ScenarioName")
             if not isinstance(scenario_value, str) or not scenario_value.strip():
-                raise ValueError("Set a non-empty ScenarioName in settings.json.")
+                raise ValueError("Set a non-empty ScenarioName in the selected settings file.")
             scenario = scenario_prefix(scenario_value)
+            output_dir = results_directory(settings, self.repository_root) / "Step04_ImageCoordinates"
+            output_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             output_path = output_dir / f"{scenario}_Coordinates_{timestamp}.json"
             suffix = 1
@@ -347,7 +392,8 @@ class ImageCoordinateApp:
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             messagebox.showerror(
                 "Could not save coordinates",
-                f"Could not save the coordinate record.\nDestination: {locals().get('output_path', 'could not be resolved')}\n\n{exc}",
+                f"Could not save the coordinate record.\nSettings: {settings_path}\n"
+                f"Destination: {locals().get('output_path', 'could not be resolved')}\n\n{exc}",
                 parent=self.root,
             )
             return
