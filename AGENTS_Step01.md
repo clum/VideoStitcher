@@ -27,7 +27,13 @@ Combine each camera's raw video segments into one file so Step 02 can align the 
 
 ## Run
 
-Activate the `VideoStitcher` Conda environment, open a terminal at the repository root, and run:
+Open a terminal at the repository root and activate the `VideoStitcher` Conda environment:
+
+```powershell
+conda activate VideoStitcher
+```
+
+Then run Step 01:
 
 ```powershell
 python Workflow/Step01_CombineRawVideos.py

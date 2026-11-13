@@ -1,6 +1,6 @@
 {
   "ScenarioName": "26_11_01_Soccer_WssaU14",
-  "ResultsDirectory": "D:\\lum\\GitHub\\VideoStitcher\\Outputs",
+  "ResultsDirectory": "D:\\lum\\GitHub\\VideoStitcher\\Outputs\\26_11_01_Soccer_WssaU14",
   "CameraA": {
     "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_11_01\\CameraA",
     "CameraModel": null,
