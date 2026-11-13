@@ -1,8 +1,8 @@
 {
-  "ScenarioName": "26_10_31_Mukilteo",
+  "ScenarioName": "26_11_01_Soccer_WssaU14",
   "ResultsDirectory": "D:\\lum\\GitHub\\VideoStitcher\\Outputs",
   "CameraA": {
-    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_10_31\\CameraA",
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_11_01\\CameraA",
     "CameraModel": null,
     "ResolutionHorizontal_px": 1920,
     "ResolutionVertical_px": 1080,
@@ -19,7 +19,7 @@
     "EvCompensation": null
   },
   "CameraB": {
-    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_10_31\\CameraB",
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_11_01\\CameraB",
     "CameraModel": null,
     "ResolutionHorizontal_px": 1920,
     "ResolutionVertical_px": 1080,
@@ -35,6 +35,5 @@
     "Sharpness": null,
     "EvCompensation": null
   },
-  "CameraBOffset_s": 0.9234126306165753,
-  "CameraBOffset_deg": 85
+  "CameraBOffset_deg": 70
 }

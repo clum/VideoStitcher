@@ -1,13 +1,15 @@
 """Combine each camera's raw video segments into one file.
 
 Configure ``CameraA.RawVideoFilePath`` and ``CameraB.RawVideoFilePath`` as
-folders in the repository-root settings.json, then run from the repo root:
+folders in settings.json, then run from the repo root:
 
     python Workflow/Step01_CombineRawVideos.py
+    python Workflow/Step01_CombineRawVideos.py --settings "path/to/settings.json"
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shutil
@@ -21,7 +23,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SETTINGS_PATH = ROOT / "settings.json"
+DEFAULT_SETTINGS_PATH = ROOT / "settings.json"
 sys.path.insert(0, str(ROOT / "Utilities"))
 from videoAlignment.workflow_paths import results_directory, scenario_prefix
 
@@ -73,15 +75,15 @@ def _natural_name_key(path: Path) -> tuple[tuple[int, object], ...]:
     return tuple((0, int(part)) if part.isdigit() else (1, part) for part in parts)
 
 
-def _load_settings() -> dict[str, Any]:
+def _load_settings(settings_path: Path = DEFAULT_SETTINGS_PATH) -> dict[str, Any]:
     try:
-        settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise WorkflowError(f"Settings file not found: {SETTINGS_PATH}") from exc
+        raise WorkflowError(f"Settings file not found: {settings_path}") from exc
     except json.JSONDecodeError as exc:
-        raise WorkflowError(f"Settings file is not valid JSON: {exc}") from exc
+        raise WorkflowError(f"Settings file {settings_path} is not valid JSON: {exc}") from exc
     except OSError as exc:
-        raise WorkflowError(f"Could not read settings file {SETTINGS_PATH}: {exc}") from exc
+        raise WorkflowError(f"Could not read settings file {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
         raise WorkflowError("settings.json must contain a JSON object.")
     scenario = settings.get("ScenarioName")
@@ -275,8 +277,8 @@ def _publish_pair(staged: list[Path], destinations: list[Path], backup_dir: Path
         raise WorkflowError(f"Could not publish combined outputs: {exc}") from exc
 
 
-def run() -> tuple[Path, Path]:
-    settings = _load_settings()
+def run(settings_path: Path = DEFAULT_SETTINGS_PATH) -> tuple[Path, Path]:
+    settings = _load_settings(settings_path)
     try:
         prefix = scenario_prefix(settings["ScenarioName"].strip())
         output_dir = results_directory(settings, ROOT) / "Step01_CombinedVideos"
@@ -329,8 +331,20 @@ def run() -> tuple[Path, Path]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Combine raw video segments for both cameras.")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        default=DEFAULT_SETTINGS_PATH,
+        help="Settings JSON path (relative paths resolve from the repository root; default: settings.json).",
+    )
+    args = parser.parse_args()
+    settings_path = args.settings.expanduser()
+    if not settings_path.is_absolute():
+        settings_path = ROOT / settings_path
+    settings_path = settings_path.resolve()
     try:
-        path_a, path_b = run()
+        path_a, path_b = run(settings_path)
     except WorkflowError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -1,0 +1,40 @@
+{
+  "ScenarioName": "26_10_31_Mukilteo",
+  "ResultsDirectory": "D:\\lum\\GitHub\\VideoStitcher\\Outputs",
+  "CameraA": {
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_10_31\\CameraA",
+    "CameraModel": null,
+    "ResolutionHorizontal_px": 1920,
+    "ResolutionVertical_px": 1080,
+    "FPS": 59.94005994,
+    "FieldOfView": null,
+    "LowLight": null,
+    "SpotMeter": null,
+    "Protune": null,
+    "WhiteBalance": null,
+    "Color": null,
+    "Shutter": null,
+    "IsoLimit": null,
+    "Sharpness": null,
+    "EvCompensation": null
+  },
+  "CameraB": {
+    "RawVideoFilePath": "D:\\lum\\GitHub\\VideoStitcher\\Inputs\\26_10_31\\CameraB",
+    "CameraModel": null,
+    "ResolutionHorizontal_px": 1920,
+    "ResolutionVertical_px": 1080,
+    "FPS": 59.94005994,
+    "FieldOfView": null,
+    "LowLight": null,
+    "SpotMeter": null,
+    "Protune": null,
+    "WhiteBalance": null,
+    "Color": null,
+    "Shutter": null,
+    "IsoLimit": null,
+    "Sharpness": null,
+    "EvCompensation": null
+  },
+  "CameraBOffset_s": 0.9234126306165753,
+  "CameraBOffset_deg": 85
+}

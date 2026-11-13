@@ -1,12 +1,19 @@
-# Video Stitcher
+# Step 02: Apply Time Offset
 
 ## Purpose
 
 Build a Python desktop application that helps a user manually align two recordings of the same event, filmed from different angles. The primary result is the signed time offset to apply to the second video so its content aligns with the first. The app also determines the matching start and end trims needed to make the aligned clips cover the same event interval; their final encoded durations may differ by up to 1 second.
 
+## Inputs
+
+- Read the repository-root `settings.json`, including `ScenarioName`, `ResultsDirectory`, and the initial `CameraBOffset_s` value.
+- By default, load `{ScenarioName}_CameraA` and `{ScenarioName}_CameraB` from `ResultsDirectory/Step01_CombinedVideos/`, using the sanitized scenario prefix and the source extension. Run Step 01 first if either default input is missing.
+- Allow the user to browse for different input videos during the session. Show the resolved input paths and preserve all source files.
+- Resolve relative result paths from the repository root. Report missing, unreadable, or unsupported media clearly, including when either video lacks audio.
+
 ## User workflow
 
-1. On startup, read the repository-root `settings.json` and locate each combined input in `ResultsDirectory/Step01_CombinedVideos/` using the sanitized `ScenarioName` and camera name. Resolve relative `ResultsDirectory` values from the repository root. Show the full resolved path for each input in the interface. Load `CameraBOffset_s` as the initial signed offset. Keep controls for changing either input during the session. Do not modify source files.
+1. On startup, read the repository-root `settings.json` and locate each combined input in `ResultsDirectory/Step01_CombinedVideos/` using the sanitized `ScenarioName` and camera name. Resolve relative `ResultsDirectory` values from the repository root. Show the full resolved path for each input in the interface. Load `CameraBOffset_s` as the initial signed offset. Keep controls for changing either input during the session. Do not modify source files. Run Step 01 first if the combined inputs do not exist.
 2. Read each file's duration, frame rate or timestamp information, dimensions, and audio stream availability. Show clear errors for unreadable files and warn when either clip has no audio.
    - Limit interactive preview and manual alignment to the first 30 seconds of each file. Show the user that the rest of each source clip is outside the current review window. Export still uses each configured source file's full duration.
 3. Display both videos and their audio waveforms in a common timeline. Make the waveforms easy to compare, with distinct styles or colors for A and B. Provide a timeline zoom control centered on the current playhead so the user can make fine alignment adjustments. Allow the user to drag the second clip earlier or later relative to the first. Moving the second clip must move its video and audio waveform together. Keep the reference clip fixed.
@@ -31,7 +38,6 @@ Build a Python desktop application that helps a user manually align two recordin
 ## Product and implementation guidance
 
 - Keep the interface focused on selecting two files, comparing synchronized playback, adjusting the second clip, and reading the resulting offset and trims.
-- Provide `Workflow/Step01_CombineRawVideos.py` to combine the supported video files directly inside each camera's `RawVideoFilePath` folder. Print the full list of files before combining each camera and show a console progress bar for the complete two-camera operation. Order by modification time oldest-first, using natural filename order for ties; stream-copy video and audio while omitting unsupported ancillary camera data streams, and preserve the source extension. Stage both `{ScenarioName}_CameraA` and `{ScenarioName}_CameraB` outputs before replacing the fixed pair in `ResultsDirectory/Step01_CombinedVideos/`.
 - Keep the Step 02 launcher at `Workflow/Step02ApplyTimeOffset.py`; it invokes the main application entry point.
 - Encapsulate application behavior in callable Python scripts, functions, classes, and/or libraries. Store this code under `Utilities/` in an organized package structure, with the user interface calling reusable functionality where practical.
 - Define a stable main application entry point that can be called from the Step 02 launcher and normal application startup.
@@ -45,6 +51,27 @@ Build a Python desktop application that helps a user manually align two recordin
 - Keep media probing, offset/overlap calculations, and UI behavior in separable modules so the calculations can be maintained independently of the interface.
 - Handle paths with spaces and Unicode, long clips, seeking, paused playback, and missing audio without silently shifting the requested offset.
 - Do not infer or automatically change the user's chosen alignment. The user controls the second clip's position; any automatic assistance must remain optional and must not replace the displayed manual offset.
+
+## Output
+
+- Save the accepted signed offset to `CameraBOffset_s` in the repository-root `settings.json`, preserving other settings.
+- Export both aligned videos to `ResultsDirectory/Step02_AlignedVideos/` as `{ScenarioName}_CameraA_Aligned.mp4` and `{ScenarioName}_CameraB_Aligned.mp4`, using the sanitized scenario prefix.
+- Both videos must cover the same shared event interval. Encode at the same frame rate and frame count; their probed durations may differ by at most 1 second.
+- Stage and validate both outputs before replacing the existing pair. Preserve source media and unrelated output files.
+
+## Run
+
+Activate the `VideoStitcher` Conda environment and run from the repository root:
+
+```powershell
+python Workflow/Step02ApplyTimeOffset.py
+```
+
+## Validation and failure handling
+
+- Report when the selected offset leaves no shared interval; do not present invalid trims or export misaligned outputs.
+- Handle media probing, playback, seeking, export, and settings write errors with actionable messages. Failed exports must retain the prior aligned pair and include the FFmpeg diagnostic log path and recent error details.
+- Do not modify source videos. Preserve other settings when saving the offset, and preserve unrelated files when publishing outputs.
 
 ## Completion criteria
 

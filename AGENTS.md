@@ -2,7 +2,8 @@
 
 ## How to use these instructions
 
-- Read `AGENTS_Step01_Step02.md` when changing the raw-video combine step or the alignment application.
+- Read `AGENTS_Step01.md` when implementing the raw-video combine step.
+- Read `AGENTS_Step02.md` when implementing the time-offset alignment application.
 - Read `AGENTS_Step03.md` when implementing the still-image extraction step.
 - Read `AGENTS_Step04.md` when implementing the image-coordinate selection GUI.
 - Read `AGENTS_Step05.md` when implementing homography estimation.
