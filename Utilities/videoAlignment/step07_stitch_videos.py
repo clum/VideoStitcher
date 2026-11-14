@@ -377,6 +377,10 @@ def _encode(
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stitch synchronized aligned videos with the Step 05 homography.")
+    parser.add_argument(
+        "--settings",
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json)",
+    )
     parser.add_argument("--videos", nargs=2, metavar=("LEFT", "RIGHT"), help="Explicit left/Camera A and right/Camera B videos")
     parser.add_argument("--homography", help="Step 05 homography JSON (relative paths use the repository root)")
     parser.add_argument("--overlap-mode", choices=("left", "blend"), default="left")
@@ -388,7 +392,8 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
     args = _parse_args(argv)
     temporary_output: Path | None = None
     try:
-        settings = load_settings(root)
+        settings_path = Path(args.settings).expanduser() if args.settings else None
+        settings = load_settings(root, settings_path)
         ffmpeg, ffprobe = _ffmpeg_tools()
         if args.videos:
             left_path, right_path = (_resolve_path(value, root) for value in args.videos)

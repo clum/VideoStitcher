@@ -6,7 +6,7 @@ Apply the Step 05 homography to synchronized frames from the aligned Camera A an
 
 ## Inputs
 
-- Read the repository-root `settings.json` and resolve `ResultsDirectory` and `ScenarioName` using the shared workflow path rules.
+- By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for default video, homography, and output paths. Relative `ResultsDirectory` paths resolve from the repository root.
 - By default, select the configured scenario's canonical `CameraA_Aligned` and `CameraB_Aligned` MP4 files in `ResultsDirectory/Step02_AlignedVideos/`. Do not choose inputs solely by modification time: derived clips may be newer than the aligned source videos.
 - Accept `--videos LEFT RIGHT` to explicitly select the left/Camera A and right/Camera B inputs. Resolve relative paths from the repository root.
 - By default, load `ResultsDirectory/Step05_Homography/{ScenarioName}_Homography.json`. Accept `--homography PATH` to select another artifact; resolve a relative path from the repository root.
@@ -46,6 +46,12 @@ Select a specific homography and blend overlap pixels:
 
 ```powershell
 python Workflow/Step07_StitchVideos.py --homography "Outputs/Step05_Homography/example_Homography.json" --overlap-mode blend
+```
+
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step07_StitchVideos.py --settings "settings_26_11_01_Soccer_WssaU14.json"
 ```
 
 Options can be combined. Explicit video paths are ordered left/Camera A first, then right/Camera B.
