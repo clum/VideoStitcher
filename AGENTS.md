@@ -12,6 +12,7 @@
 - Read `AGENTS_Step07b.md` when converting a video to a lower resolution or frame rate.
 - Read `AGENTS_Step08.md` when implementing removal-range identification.
 - Read `AGENTS_Step08b.md` when removing video sections identified by Step 08.
+- Read `AGENTS_Step09a.md` when selecting a region of interest from the Step 08b video.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
