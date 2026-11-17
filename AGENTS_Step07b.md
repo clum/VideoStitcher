@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Use the reusable `videoAlignment.video_conversion.convert_video` function to create a lower-resolution, lower-frame-rate copy of a video. The user-facing entry point is `Workflow/Step07a_CreateProxyVideo.py`; it calls the reusable function and does not modify the source.
+Use the reusable `videoAlignment.video_conversion.convert_video` function to create a lower-resolution, lower-frame-rate copy of a video. The user-facing entry point is `Workflow/Step07b_CreateProxyVideo.py`; it calls the reusable function and does not modify the source.
 
 ## Inputs and behavior
 
@@ -15,14 +15,14 @@ Use the reusable `videoAlignment.video_conversion.convert_video` function to cre
 
 ## Launcher
 
-- Create `Workflow/Step07a_CreateProxyVideo.py` as the runnable launcher and keep the reusable conversion implementation in `Utilities/videoAlignment/video_conversion.py`.
+- Create `Workflow/Step07b_CreateProxyVideo.py` as the runnable launcher and keep the reusable conversion implementation in `Utilities/videoAlignment/video_conversion.py`.
 - Accept required `--input PATH` and `--output PATH` arguments, plus optional `--width`, `--height`, and `--fps` arguments. Use the utility defaults when the optional arguments are omitted. Resolve relative paths from the repository root.
 - Print the resulting output path on success. On conversion failure, print an actionable error and return a non-zero exit code.
 
 Run from the repository root with the `VideoStitcher` Conda environment active:
 
 ```powershell
-python Workflow/Step07a_CreateProxyVideo.py --input "Inputs/game_recording.mp4" --output "Outputs/game_recording_720p_15fps.mp4" --width 1280 --height 720 --fps 15
+python Workflow/Step07b_CreateProxyVideo.py --input "Inputs/game_recording.mp4" --output "Outputs/game_recording_640x360_10fps.mp4" --width 640 --height 360 --fps 10
 ```
 
 ## Example
@@ -53,5 +53,5 @@ This direct function example is also available to other Python code. Use the lau
 - Calling `convert_video` with only input and output paths uses 640×360 at 10 fps; caller-supplied dimensions and frame rate override these defaults.
 - Output dimensions and frame rate match the requested values, aspect ratio is preserved with padding, and audio is present exactly when the source contains audio.
 - Output duration differs from the source by no more than one output frame. The original remains unchanged, and failed conversions do not replace an existing destination.
-- `Workflow/Step07a_CreateProxyVideo.py` can be run from the repository root with required input/output paths and optional conversion parameters; it invokes the reusable function and reports success or failure clearly.
+- `Workflow/Step07b_CreateProxyVideo.py` can be run from the repository root with required input/output paths and optional conversion parameters; it invokes the reusable function and reports success or failure clearly.
 - The function can be imported and used independently of Step 08 or other workflow steps.
