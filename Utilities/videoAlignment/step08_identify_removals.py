@@ -248,9 +248,14 @@ if QT_IMPORT_ERROR is None:
             layout = QVBoxLayout(central)
 
             video_row = QHBoxLayout()
+            video_controls = QVBoxLayout()
+            video_note = QLabel("Select video (recommend using a lower resolution proxy video)")
+            video_note.setStyleSheet("font-size: 9pt; color: #555;")
+            video_controls.addWidget(video_note)
             self.browse_video_button = QPushButton("Browse video…")
             self.browse_video_button.clicked.connect(self.browse_video)
-            video_row.addWidget(self.browse_video_button)
+            video_controls.addWidget(self.browse_video_button)
+            video_row.addLayout(video_controls)
             self.path_label = QLabel("No video loaded")
             self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             self.path_label.setWordWrap(True)
@@ -350,7 +355,7 @@ if QT_IMPORT_ERROR is None:
             self.save_button = QPushButton("Save CSV")
             self.save_button.clicked.connect(self.save_csv)
             self.save_button.setEnabled(False)
-            bottom.addWidget(self.save_button, 0, 3, 2, 1)
+            bottom.addWidget(self.save_button, 1, 2)
             bottom.setColumnStretch(0, 1)
             layout.addLayout(bottom)
 
@@ -721,6 +726,10 @@ else:
 def main(repository_root: Path | None = None, argv: list[str] | None = None) -> int:
     root_path = (repository_root or Path(__file__).resolve().parents[2]).resolve()
     parser = argparse.ArgumentParser(description="Review a stitched video and mark intervals for later removal.")
+    parser.add_argument(
+        "--settings",
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
+    )
     parser.add_argument("--video", help="Video to load (relative paths resolve from the repository root).")
     args = parser.parse_args(argv)
     if QT_IMPORT_ERROR is not None:
@@ -731,7 +740,8 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
         )
         return 1
     try:
-        settings = load_settings(root_path)
+        settings_path = Path(args.settings).expanduser() if args.settings else None
+        settings = load_settings(root_path, settings_path)
         ffprobe = _ffprobe_tool()
         default_video = Path(args.video).expanduser() if args.video else (
             results_directory(settings, root_path) / "Step07_StitchedVideos"

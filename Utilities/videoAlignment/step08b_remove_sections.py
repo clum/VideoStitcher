@@ -276,6 +276,11 @@ def _encode(
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Remove Step 08 intervals from a stitched video.")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
+    )
     parser.add_argument("--video", help="Source video; defaults to the configured Step 07 stitched MP4.")
     parser.add_argument("--removals", help="Step 08 CSV; defaults to the configured scenario CSV.")
     return parser.parse_args(argv)
@@ -286,7 +291,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
     args = _parse_args(argv)
     temporary: Path | None = None
     try:
-        settings = load_settings(root)
+        settings = load_settings(root, args.settings)
         ffmpeg, ffprobe = _tools()
         scenario = scenario_prefix(settings["ScenarioName"])
         source = _resolve_path(args.video, root) if args.video else (

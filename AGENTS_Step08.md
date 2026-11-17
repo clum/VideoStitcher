@@ -6,9 +6,10 @@ Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 an
 
 ## Inputs
 
-- Read repository-root `settings.json` and resolve `ScenarioName` and `ResultsDirectory` using the shared workflow path rules.
+- By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for default video and CSV paths. Relative `ResultsDirectory` paths resolve from the repository root.
 - By default, open `ResultsDirectory/Step07_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to specify an input video when launching Step 08; resolve relative paths from the repository root. If omitted, use the configured Step 07 output.
 - Provide a Browse control so the user can select another supported video from the GUI, and display the full selected path. A GUI selection replaces the startup/default input for the current session.
+- Place a small annotation above the Browse video button recommending a lower-resolution proxy video for review.
 - Provide a Browse CSV control for choosing the output directory and filename. Start with the configured scenario-based CSV path. Selecting a new path keeps the current ranges and changes where the next explicit save writes.
 - If the selected CSV already exists, load its ranges into the GUI for review and editing. Require the `ID,StartTime,EndTime,Comment` header and valid rows; validate timestamps, duration bounds, and overlaps against the currently loaded video. Reject the entire file on any error and preserve the current ranges and output path. Imported rows are sorted by start time and receive sequential IDs in the GUI.
 - Report actionable errors when settings or the default video are missing, a specified or browsed path is invalid, or the video cannot be opened or probed. Do not alter the video.
@@ -55,6 +56,18 @@ Open a specific video instead of the configured Step 07 output:
 python Workflow/Step08_IdentifyRemovals.py --video "path/to/video.mp4"
 ```
 
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step08_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+```
+
+Options can be combined, for example:
+
+```powershell
+python Workflow/Step08_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json" --video "path/to/video.mp4"
+```
+
 Keep the user-facing entry point under `Workflow/` and reusable implementation under `Utilities/`, following the shared workflow conventions.
 
 ## Validation and failure handling
@@ -68,7 +81,8 @@ Keep the user-facing entry point under `Workflow/` and reusable implementation u
 
 ## Acceptance criteria
 
-- The GUI opens the configured Step 07 stitched video by default, `--video PATH` overrides that startup input, and the user can browse to another video in the GUI.
+- The GUI uses the default settings file or selected `--settings PATH`; its `ScenarioName` and `ResultsDirectory` determine the default video and CSV. `--video PATH` overrides the startup video, and the user can browse to another video in the GUI.
+- Show the lower-resolution proxy recommendation above Browse video, and align Browse CSV and Save CSV vertically on the same row.
 - The user can play, pause, stop, and scrub video and audio through the same Qt player, and mark interval endpoints using the player's media position. Videos without audio remain usable with a clear status.
 - The user can add a comment, edit or remove any interval, and see ranges sorted by start time with sequential IDs. Invalid and overlapping ranges are rejected with an explanation.
 - The user can browse to a `.csv` destination. Existing valid CSV rows load for editing, while invalid files are rejected without changing current state. Saving writes the specified four-column CSV with a header, `HH:MM:SS.mmm` timestamps, escaped comments, and the selected destination (the scenario-based path by default).

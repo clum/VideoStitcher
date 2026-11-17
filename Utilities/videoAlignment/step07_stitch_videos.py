@@ -54,7 +54,7 @@ def _fraction(value: str) -> float:
         return 0.0
 
 
-def _probe_video(ffprobe: str, path: Path) -> VideoInfo:
+def _probe_video(ffprobe: str, path: Path, timestamp_limit: float | None = None) -> VideoInfo:
     if not path.is_file():
         raise StitchingError(f"Video file does not exist: {path}")
     data = _run_probe(ffprobe, ["-show_streams", "-show_format"], path)
@@ -66,11 +66,11 @@ def _probe_video(ffprobe: str, path: Path) -> VideoInfo:
     fps = _fraction(video.get("avg_frame_rate", "0/0")) or _fraction(video.get("r_frame_rate", "0/0"))
     if width <= 0 or height <= 0 or not math.isfinite(fps) or fps <= 0:
         raise StitchingError(f"Invalid dimensions or frame rate in {path}")
-    frames_data = _run_probe(
-        ffprobe,
-        ["-select_streams", "v:0", "-show_frames", "-show_entries", "frame=best_effort_timestamp_time,pts_time"],
-        path,
-    )
+    frame_probe_args = ["-select_streams", "v:0"]
+    if timestamp_limit is not None:
+        frame_probe_args.extend(["-read_intervals", f"%+{timestamp_limit:.9f}"])
+    frame_probe_args.extend(["-show_frames", "-show_entries", "frame=best_effort_timestamp_time,pts_time"])
+    frames_data = _run_probe(ffprobe, frame_probe_args, path)
     timestamps: list[float] = []
     for frame in frames_data.get("frames", []):
         raw = frame.get("best_effort_timestamp_time", frame.get("pts_time"))
@@ -236,12 +236,13 @@ def _ffmpeg_tools() -> tuple[str, str]:
 def _encode(
     ffmpeg: str, ffprobe: str, left_info: VideoInfo, right_info: VideoInfo,
     transform: np.ndarray, size: tuple[int, int], left_rect: tuple[int, int, int, int],
-    overlap_mode: str, output_path: Path,
+    overlap_mode: str, output_path: Path, duration_limit: float | None = None,
 ) -> None:
     width, height = size
     fps = left_info.fps
     common_duration = min(left_info.duration, right_info.duration)
-    expected_count = int(math.ceil(common_duration * fps - 1e-9))
+    output_duration = min(common_duration, duration_limit) if duration_limit is not None else common_duration
+    expected_count = int(math.ceil(output_duration * fps - 1e-9))
     if expected_count <= 0:
         raise StitchingError("No Camera A frames fall inside the common input duration.")
     output_times = [index / fps for index in range(expected_count)]
@@ -271,11 +272,11 @@ def _encode(
     if left_info.has_audio:
         command.extend(["-i", str(left_info.path), "-map", "0:v:0", "-map", "1:a:0?"])
     command.extend([
-        "-frames:v", str(expected_count), "-t", f"{common_duration:.9f}",
+        "-frames:v", str(expected_count), "-t", f"{output_duration:.9f}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
     ])
     if left_info.has_audio:
-        command.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-af", f"atrim=duration={common_duration:.9f},asetpts=PTS-STARTPTS"])
+        command.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-af", f"atrim=duration={output_duration:.9f},asetpts=PTS-STARTPTS"])
     command.extend(["-movflags", "+faststart", str(output_path)])
     log_path = output_path.with_suffix(".ffmpeg.log")
     started = time.monotonic()
@@ -381,6 +382,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--settings",
         help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json)",
     )
+    parser.add_argument(
+        "--preview-seconds",
+        type=float,
+        help="Encode only the first N seconds and save a separate preview MP4 instead of the full output.",
+    )
     parser.add_argument("--videos", nargs=2, metavar=("LEFT", "RIGHT"), help="Explicit left/Camera A and right/Camera B videos")
     parser.add_argument("--homography", help="Step 05 homography JSON (relative paths use the repository root)")
     parser.add_argument("--overlap-mode", choices=("left", "blend"), default="left")
@@ -392,6 +398,10 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
     args = _parse_args(argv)
     temporary_output: Path | None = None
     try:
+        if args.preview_seconds is not None and (
+            not math.isfinite(args.preview_seconds) or args.preview_seconds <= 0
+        ):
+            raise StitchingError("--preview-seconds must be a positive finite number.")
         settings_path = Path(args.settings).expanduser() if args.settings else None
         settings = load_settings(root, settings_path)
         ffmpeg, ffprobe = _ffmpeg_tools()
@@ -401,7 +411,8 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
             left_path, right_path = _canonical_videos(settings, root)
         homography, coordinate_path, artifact_path = _load_homography(settings, root, args.homography)
         coordinates = load_coordinate_data(coordinate_path, settings, root)
-        left_info, right_info = _probe_video(ffprobe, left_path), _probe_video(ffprobe, right_path)
+        left_info = _probe_video(ffprobe, left_path, args.preview_seconds)
+        right_info = _probe_video(ffprobe, right_path, args.preview_seconds)
         expected = (
             (coordinates.left_width, coordinates.left_height),
             (coordinates.right_width, coordinates.right_height),
@@ -421,19 +432,26 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
             left_info.width, left_info.height, right_info.width, right_info.height,
             coordinates.left_points, coordinates.right_points, homography,
         )
-        print(f"Panorama dimensions: {canvas_size[0]}x{canvas_size[1]}; common duration: {min(left_info.duration, right_info.duration):.3f}s")
+        common_duration = min(left_info.duration, right_info.duration)
+        output_duration = min(common_duration, args.preview_seconds) if args.preview_seconds is not None else common_duration
+        print(f"Panorama dimensions: {canvas_size[0]}x{canvas_size[1]}; output duration: {output_duration:.3f}s")
+        if args.preview_seconds is not None:
+            print(f"Preview mode: first {output_duration:.3f}s; the full stitched output will be left unchanged.")
         output_dir = results_directory(settings, root) / "Step07_StitchedVideos"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{scenario_prefix(settings['ScenarioName'])}_Stitched.mp4"
-        with tempfile.NamedTemporaryFile(prefix=".step07_", suffix=".mp4", dir=output_dir, delete=False) as temporary:
+        scenario = scenario_prefix(settings["ScenarioName"])
+        output_name = f"{scenario}_Stitched_Preview.mp4" if args.preview_seconds is not None else f"{scenario}_Stitched.mp4"
+        output_path = output_dir / output_name
+        temp_prefix = ".step07_preview_" if args.preview_seconds is not None else ".step07_"
+        with tempfile.NamedTemporaryFile(prefix=temp_prefix, suffix=".mp4", dir=output_dir, delete=False) as temporary:
             temporary_output = Path(temporary.name)
         _encode(
             ffmpeg, ffprobe, left_info, right_info, transform, canvas_size, left_rect,
-            args.overlap_mode, temporary_output,
+            args.overlap_mode, temporary_output, args.preview_seconds,
         )
         os.replace(temporary_output, output_path)
         temporary_output = None
-        print(f"Stitched video saved to: {output_path.resolve()}")
+        print(f"{'Preview' if args.preview_seconds is not None else 'Stitched'} video saved to: {output_path.resolve()}")
         return 0
     except (StitchingError, OSError, ValueError, cv2.error, subprocess.SubprocessError) as exc:
         print(f"Step 07 failed: {exc}", file=sys.stderr)

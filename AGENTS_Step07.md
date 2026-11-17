@@ -18,15 +18,16 @@ Apply the Step 05 homography to synchronized frames from the aligned Camera A an
 - The homography maps right-camera pixels into the left-camera coordinate system. Use the same full transformed-right-image panorama canvas and horizon-crossing similarity fallback as Step 06. Do not crop the output to the left frame.
 - Synchronize frames by presentation timestamps, not by assuming frame number equality or equal frame rates. Generate output on Camera A's timeline at Camera A's frame rate, pair each output time with the corresponding Camera B frame by timestamp, and stop at the shorter usable video duration. Handle timestamp gaps or decode failures explicitly rather than silently pairing unrelated frames.
 - Composite each frame using the Step 06 rule: left-camera pixels take priority wherever covered; fill uncovered canvas pixels with warped Camera B pixels. Accept `--overlap-mode blend` for equal-weight blending in overlap regions; default to `left`. The selected mode must not change the standalone warped-right geometry.
+- Accept `--preview-seconds N` to encode only the first N seconds of the synchronized output timeline. Use this to inspect a short sample before starting a full encode. N must be positive and finite; if it exceeds the common input duration, encode only the available duration. Limit frame-timestamp probing and processing to that preview window, and trim Camera A audio to the same duration.
 - Show useful progress, such as processed frames and elapsed or estimated remaining time when duration is known. Report the selected inputs, transform, overlap mode, output frame rate, and whether Camera A audio is present.
 
 ## Output and encoding
 
-- Write `{ScenarioName}_Stitched.mp4` under `ResultsDirectory/Step07_StitchedVideos/`.
+- A full run writes `{ScenarioName}_Stitched.mp4` under `ResultsDirectory/Step07_StitchedVideos/`. A run with `--preview-seconds N` writes `{ScenarioName}_Stitched_Preview.mp4` in the same folder, leaving the full stitched output untouched.
 - Use Camera A's frame rate and audio. If Camera A has no audio stream, produce a silent MP4 and report this clearly. Do not take audio from Camera B.
 - Follow Step 02's H.264/AAC export settings (H.264 video, AAC audio where present, and the same quality, pixel-format, and audio parameters configured there). Preserve the intended playback duration and timestamps.
-- Encode to a temporary file in the Step 07 output folder. Verify the completed file can be probed/read and has expected video dimensions, frame rate, duration, and audio presence before replacing the existing scenario output. On failure, remove only the temporary file and leave any prior output untouched.
-- Reruns replace only `{ScenarioName}_Stitched.mp4`; preserve both source videos, homography/coordinate artifacts, and unrelated Step 07 files.
+- Encode to a temporary file in the Step 07 output folder. Verify the completed file can be probed/read and has expected video dimensions, frame rate, duration, and audio presence before replacing its corresponding full or preview output. On failure, remove only the temporary file and leave any prior output untouched.
+- Full reruns replace only `{ScenarioName}_Stitched.mp4`; preview reruns replace only `{ScenarioName}_Stitched_Preview.mp4`. Preserve both source videos, homography/coordinate artifacts, and unrelated Step 07 files.
 
 ## Run
 
@@ -48,6 +49,12 @@ Select a specific homography and blend overlap pixels:
 python Workflow/Step07_StitchVideos.py --homography "Outputs/Step05_Homography/example_Homography.json" --overlap-mode blend
 ```
 
+Create a five-second preview before encoding the full video:
+
+```powershell
+python Workflow/Step07_StitchVideos.py --preview-seconds 5
+```
+
 Use a user-selected settings file:
 
 ```powershell
@@ -67,5 +74,6 @@ Options can be combined. Explicit video paths are ordered left/Camera A first, t
 - Default selection uses the configured scenario's canonical aligned Camera A/B pair; `--videos` independently overrides that pair. Defaults do not accidentally select newer derived clips.
 - The configured scenario homography is used by default, and `--homography` selects an explicit artifact. The artifact's coordinate-record reference supplies the correct landmark pairs for the same fallback behavior as Step 06.
 - Every output frame uses the full transformed panorama canvas and is timestamp-aligned. Processing stops at the shorter input duration.
+- `--preview-seconds` limits processing to the beginning of the common timeline and creates a separate preview output without replacing the full stitched MP4.
 - Left-priority is the default; blend mode changes only overlap composition. Output uses Camera A's frame rate and Camera A audio when present, otherwise it is silent with a clear report.
-- A successful run produces a verified `{ScenarioName}_Stitched.mp4` in the Step 07 result folder. Failed runs leave any prior output, source videos, and unrelated files intact.
+- A full run produces a verified `{ScenarioName}_Stitched.mp4`; a preview run produces a verified `{ScenarioName}_Stitched_Preview.mp4`. Failed runs leave prior outputs, source videos, and unrelated files intact.

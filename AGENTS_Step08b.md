@@ -6,7 +6,7 @@ Create a version of the Step 07 stitched video with the removal intervals select
 
 ## Inputs
 
-- Read repository-root `settings.json` and resolve `ScenarioName` and `ResultsDirectory` using the shared workflow path rules.
+- By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for default video, CSV, and output paths. Relative `ResultsDirectory` paths resolve from the repository root.
 - By default, read `ResultsDirectory/Step07_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to select another video; resolve relative paths from the repository root.
 - By default, read `ResultsDirectory/Step08_IdentifyRemovals/{ScenarioName}_RemovalSegments.csv`. Accept `--removals PATH` to select a CSV that matches the selected video; resolve relative paths from the repository root.
 - Require the Step 08 CSV header `ID,StartTime,EndTime,Comment`. Parse times as `HH:MM:SS.mmm` from the start of the video. Comments and IDs do not affect cut timing.
@@ -44,6 +44,18 @@ python Workflow/Step08b_RemoveSections.py --video "path/to/video.mp4" --removals
 
 The launcher may also accept `--video` alone when the configured scenario's Step 08 CSV is intended for that video.
 
+Use a user-selected settings file:
+
+```powershell
+python Workflow/Step08b_RemoveSections.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+```
+
+Options can be combined, for example:
+
+```powershell
+python Workflow/Step08b_RemoveSections.py --settings "settings_26_11_01_Soccer_WssaU14.json" --video "path/to/video.mp4" --removals "path/to/removal_segments.csv"
+```
+
 ## Validation and failure handling
 
 - Give actionable errors for missing settings, video, or CSV; unreadable or unsupported media; malformed CSV; invalid, overlapping, or out-of-duration ranges; no retained video; encoding failures; and output verification or write failures.
@@ -52,7 +64,7 @@ The launcher may also accept `--video` alone when the configured scenario's Step
 
 ## Acceptance criteria
 
-- Defaults select the configured Step 07 stitched video and the matching Step 08 removal CSV; `--video` and `--removals` select explicit inputs.
+- Defaults use the default or selected `--settings PATH` file's scenario and results directory to select the Step 07 stitched video and matching Step 08 CSV; `--video` and `--removals` select explicit inputs.
 - Every marked interval is removed from both audio and video, and all retained sections are joined in their original order with continuous output timestamps.
 - Opening or ending gaps of 5 seconds or less are removed by extending the first or last interval to the corresponding video edge; gaps longer than 5 seconds remain. This does not change the CSV or source video.
 - Output video dimensions, frame rate, H.264 quality settings, and audio behavior match Step 07. A source without audio yields a silent output.
