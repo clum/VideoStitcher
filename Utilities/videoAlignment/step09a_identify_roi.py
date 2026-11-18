@@ -341,8 +341,16 @@ class RegionOfInterestApp:
             return
         else:
             self.bottom_right = (x, y)
-            self.save_button.configure(state="normal")
-            self._set_status(f"ROI selected: {self.top_left} to {self.bottom_right}. Save when ready.")
+            valid, expanded_axes = self._normalize_roi_dimensions()
+            self.save_button.configure(state="normal" if valid else "disabled")
+            if valid:
+                adjustment = f"; expanded by one pixel on {', '.join(expanded_axes)}" if expanded_axes else ""
+                self._set_status(f"ROI selected: {self.top_left} to {self.bottom_right}{adjustment}. Save when ready.")
+            else:
+                self._set_status(
+                    "The ROI width or height is odd and cannot be expanded inside the frame. "
+                    "Drag a corner to make that dimension even."
+                )
         self.render()
 
     def canvas_press(self, event) -> None:
@@ -388,12 +396,66 @@ class RegionOfInterestApp:
             x = min(width - 1, x)
             y = min(height - 1, y)
             self.bottom_right = (x, y)
+        self.save_button.configure(state="disabled")
         self.render()
         self._set_status(f"ROI adjusted: {self.top_left} to {self.bottom_right}. Drag either marker to refine it.")
 
     def canvas_release(self, _event=None) -> None:
+        valid = False
+        if self.top_left is not None and self.bottom_right is not None:
+            valid, expanded_axes = self._normalize_roi_dimensions()
+            if valid:
+                self.save_button.configure(state="normal")
+                if expanded_axes:
+                    self._set_status(
+                        f"ROI adjusted: {self.top_left} to {self.bottom_right}; "
+                        f"expanded by one pixel on {', '.join(expanded_axes)}. Save when ready."
+                    )
+                else:
+                    self._set_status(f"ROI adjusted: {self.top_left} to {self.bottom_right}. Save when ready.")
+            else:
+                self.save_button.configure(state="disabled")
+                self._set_status(
+                    "The ROI width or height is odd and cannot be expanded inside the frame. "
+                    "Drag a corner to make that dimension even."
+                )
         self.dragging_corner = None
         self.canvas.configure(cursor="")
+        if self.showing_still:
+            self.render()
+
+    def _normalize_roi_dimensions(self) -> tuple[bool, list[str]]:
+        """Expand odd ROI dimensions by one pixel without exceeding the frame."""
+        if self.still_frame is None or self.top_left is None or self.bottom_right is None:
+            return False, []
+        height, width = self.still_frame.shape[:2]
+        left, top = self.top_left
+        right, bottom = self.bottom_right
+        expanded_axes: list[str] = []
+
+        if (right - left + 1) % 2:
+            if right < width - 1:
+                right += 1
+                expanded_axes.append("right")
+            elif left > 0:
+                left -= 1
+                expanded_axes.append("left")
+            else:
+                return False, []
+
+        if (bottom - top + 1) % 2:
+            if bottom < height - 1:
+                bottom += 1
+                expanded_axes.append("bottom")
+            elif top > 0:
+                top -= 1
+                expanded_axes.append("top")
+            else:
+                return False, []
+
+        self.top_left = (left, top)
+        self.bottom_right = (right, bottom)
+        return True, expanded_axes
 
     def render(self, _event=None) -> None:
         self.canvas.delete("all")
@@ -448,6 +510,16 @@ class RegionOfInterestApp:
         ):
             messagebox.showwarning("ROI incomplete", "Capture a frame and select both rectangle corners before saving.", parent=self.root)
             return
+        roi_width = self.bottom_right[0] - self.top_left[0] + 1
+        roi_height = self.bottom_right[1] - self.top_left[1] + 1
+        if roi_width % 2 or roi_height % 2:
+            self.save_button.configure(state="disabled")
+            messagebox.showwarning(
+                "ROI dimensions must be even",
+                "The ROI width and height must both be divisible by 2. Adjust a corner and try again.",
+                parent=self.root,
+            )
+            return
         try:
             scenario_value = self.settings.get("ScenarioName")
             if not isinstance(scenario_value, str) or not scenario_value.strip():
@@ -458,8 +530,6 @@ class RegionOfInterestApp:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             output_path = output_dir / f"{prefix}_RegionOfInterest_{timestamp}.json"
             height, width = self.still_frame.shape[:2]
-            roi_width = self.bottom_right[0] - self.top_left[0] + 1
-            roi_height = self.bottom_right[1] - self.top_left[1] + 1
             record = {
                 "ScenarioName": scenario_value,
                 "CreatedAtLocal": datetime.now().astimezone().isoformat(timespec="seconds"),

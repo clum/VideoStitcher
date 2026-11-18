@@ -13,6 +13,7 @@
 - Read `AGENTS_Step08.md` when implementing removal-range identification.
 - Read `AGENTS_Step08b.md` when removing video sections identified by Step 08.
 - Read `AGENTS_Step09a.md` when selecting a region of interest from the Step 08b video.
+- Read `AGENTS_Step09b.md` when cropping video to a selected region of interest.
 - Keep each step's detailed behavior and acceptance criteria in that step's document.
 
 ## Shared workflow conventions
