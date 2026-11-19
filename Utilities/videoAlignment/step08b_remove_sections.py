@@ -1,4 +1,4 @@
-"""Remove Step 08 intervals from a video while preserving its timeline settings."""
+"""Remove Step 08a intervals from a video while preserving its timeline settings."""
 
 from __future__ import annotations
 
@@ -275,14 +275,14 @@ def _encode(
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Remove Step 08 intervals from a stitched video.")
+    parser = argparse.ArgumentParser(description="Remove Step 08a intervals from a stitched video.")
     parser.add_argument(
         "--settings",
         type=Path,
         help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
     )
     parser.add_argument("--video", help="Source video; defaults to the configured Step 07 stitched MP4.")
-    parser.add_argument("--removals", help="Step 08 CSV; defaults to the configured scenario CSV.")
+    parser.add_argument("--removals", help="Step 08a CSV; defaults to the configured scenario CSV.")
     return parser.parse_args(argv)
 
 
@@ -298,7 +298,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
             results_directory(settings, root) / "Step07_StitchedVideos" / f"{scenario}_Stitched.mp4"
         ).resolve()
         removals_path = _resolve_path(args.removals, root) if args.removals else (
-            results_directory(settings, root) / "Step08_IdentifyRemovals" / f"{scenario}_RemovalSegments.csv"
+            results_directory(settings, root) / "Step08a_IdentifyRemovals" / f"{scenario}_RemovalSegments.csv"
         ).resolve()
         _, source_info = _probe(ffprobe, source)
         raw_ranges = _load_ranges(removals_path, source_info.duration)

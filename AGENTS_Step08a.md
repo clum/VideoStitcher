@@ -1,13 +1,13 @@
-# Step 08: Identify Video Sections for Removal
+# Step 08a: Identify Video Sections for Removal
 
 ## Purpose
 
-Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 and recording long, uninteresting intervals—such as halftime breaks or timeouts—for a later workflow step to remove. Step 08 only identifies intervals and writes a CSV; it must not modify or re-encode the video.
+Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 and recording long, uninteresting intervals—such as halftime breaks or timeouts—for Step 08b to remove. Step 08a only identifies intervals and writes a CSV; it must not modify or re-encode the video.
 
 ## Inputs
 
 - By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for default video and CSV paths. Relative `ResultsDirectory` paths resolve from the repository root.
-- By default, open `ResultsDirectory/Step07_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to specify an input video when launching Step 08; resolve relative paths from the repository root. If omitted, use the configured Step 07 output.
+- By default, open `ResultsDirectory/Step07_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to specify an input video when launching Step 08a; resolve relative paths from the repository root. If omitted, use the configured Step 07 output.
 - Provide a Browse control so the user can select another supported video from the GUI, and display the full selected path. A GUI selection replaces the startup/default input for the current session.
 - Place a small annotation above the Browse video button recommending a lower-resolution proxy video for review.
 - Provide a Browse CSV control for choosing the output directory and filename. Start with the configured scenario-based CSV path. Selecting a new path keeps the current ranges and changes where the next explicit save writes.
@@ -26,7 +26,7 @@ Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 an
 
 ## Output and persistence
 
-- By default, save the CSV to `ResultsDirectory/Step08_IdentifyRemovals/{ScenarioName}_RemovalSegments.csv`, creating the folder as needed. The Browse CSV control may select another `.csv` path, and Save writes to the currently displayed destination. Saving remains explicit and replaces only that selected CSV while preserving unrelated files.
+- By default, save the CSV to `ResultsDirectory/Step08a_IdentifyRemovals/{ScenarioName}_RemovalSegments.csv`, creating the folder as needed. The Browse CSV control may select another `.csv` path, and Save writes to the currently displayed destination. Saving remains explicit and replaces only that selected CSV while preserving unrelated files.
 - Write a header followed by one row per range, with exactly these columns in this order: `ID,StartTime,EndTime,Comment`.
 - Format both times as `HH:MM:SS.mmm` from the original video's start. Quote and escape comments according to standard CSV rules so commas, quotes, and newlines are preserved as a single comment field.
 - Sort rows by start time and use sequential integer IDs. An empty range list may be saved as a header-only CSV to represent that no sections were marked.
@@ -36,7 +36,7 @@ Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 an
 
 From the repository root, with the `VideoStitcher` Conda environment active:
 
-Install the Step 08 playback dependency in that environment if it is not already present:
+Install the Step 08a playback dependency in that environment if it is not already present:
 
 ```powershell
 conda install -n VideoStitcher --override-channels -c conda-forge opencv=4.13.0 pyside6 qt6-multimedia
@@ -44,28 +44,28 @@ conda install -n VideoStitcher --override-channels -c conda-forge opencv=4.13.0 
 
 The explicit OpenCV version replaces the environment's earlier wildcard build constraint during dependency resolution. Qt Multimedia is provided by `qt6-multimedia`; a separate `qt6-multimedia-ffmpeg` package is not required from conda-forge.
 
-Then run Step 08:
+Then run Step 08a:
 
 ```powershell
-python Workflow/Step08_IdentifyRemovals.py
+python Workflow/Step08a_IdentifyRemovals.py
 ```
 
 Open a specific video instead of the configured Step 07 output:
 
 ```powershell
-python Workflow/Step08_IdentifyRemovals.py --video "path/to/video.mp4"
+python Workflow/Step08a_IdentifyRemovals.py --video "path/to/video.mp4"
 ```
 
 Use a user-selected settings file:
 
 ```powershell
-python Workflow/Step08_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+python Workflow/Step08a_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json"
 ```
 
 Options can be combined, for example:
 
 ```powershell
-python Workflow/Step08_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json" --video "path/to/video.mp4"
+python Workflow/Step08a_IdentifyRemovals.py --settings "settings_26_11_01_Soccer_WssaU14.json" --video "path/to/video.mp4"
 ```
 
 Keep the user-facing entry point under `Workflow/` and reusable implementation under `Utilities/`, following the shared workflow conventions.

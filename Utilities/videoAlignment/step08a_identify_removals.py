@@ -141,7 +141,7 @@ def parse_timestamp(value: str) -> float:
 
 
 def load_ranges(path: Path, duration: float, first_uid: int = 1) -> list[RemovalRange]:
-    """Read and validate a complete Step 08 CSV before returning any ranges."""
+    """Read and validate a complete Step 08a CSV before returning any ranges."""
     expected_header = ["ID", "StartTime", "EndTime", "Comment"]
     ranges: list[RemovalRange] = []
     try:
@@ -206,7 +206,7 @@ def save_ranges(path: Path, ranges: list[RemovalRange]) -> None:
 
 if QT_IMPORT_ERROR is None:
     class RemovalEditor(QMainWindow):
-        """Step 08 editor whose media player owns the playback clock."""
+        """Step 08a editor whose media player owns the playback clock."""
 
         def __init__(
             self, settings: dict[str, Any], repository_root: Path, ffprobe: str,
@@ -215,7 +215,7 @@ if QT_IMPORT_ERROR is None:
             self.settings = settings
             self.repository_root = repository_root
             self.ffprobe = ffprobe
-            self.default_output_path = results_directory(settings, repository_root) / "Step08_IdentifyRemovals" / (
+            self.default_output_path = results_directory(settings, repository_root) / "Step08a_IdentifyRemovals" / (
                 f"{scenario_prefix(settings['ScenarioName'])}_RemovalSegments.csv"
             )
             self.output_path = self.default_output_path
@@ -720,7 +720,7 @@ else:
         """Placeholder used only when PySide6 is unavailable."""
 
         def __init__(self, *_args, **_kwargs):
-            raise RuntimeError("PySide6 is required to create the Step 08 GUI.")
+            raise RuntimeError("PySide6 is required to create the Step 08a GUI.")
 
 
 def main(repository_root: Path | None = None, argv: list[str] | None = None) -> int:
@@ -734,7 +734,7 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
     args = parser.parse_args(argv)
     if QT_IMPORT_ERROR is not None:
         print(
-            "Step 08 requires PySide6 Qt Multimedia. Activate the VideoStitcher environment and install it with "
+            "Step 08a requires PySide6 Qt Multimedia. Activate the VideoStitcher environment and install it with "
             "`conda install -n VideoStitcher --override-channels -c conda-forge opencv=4.13.0 pyside6 qt6-multimedia`.",
             file=sys.stderr,
         )
@@ -751,7 +751,7 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
             default_video = root_path / default_video
         default_video = default_video.resolve()
     except (StitchingError, OSError, ValueError) as exc:
-        print(f"Step 08 could not start: {exc}", file=sys.stderr)
+        print(f"Step 08a could not start: {exc}", file=sys.stderr)
         return 1
 
     startup_error: str | None = None
