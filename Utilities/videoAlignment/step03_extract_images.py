@@ -112,13 +112,20 @@ def _timestamp_text(value: Fraction) -> str:
     return f"{float(value):.9f}"
 
 
-def _nearest_frame_time(ffprobe: str, source: VideoSource, requested_time_s: int) -> Fraction:
-    target = source.start_time + requested_time_s
-    # Inspect a local window around the target. This includes frames on both
-    # sides so the selected frame is the closest decoded presentation time.
-    window_start = max(source.start_time, target - 2)
-    window_duration = max(Fraction(1, 10), target + 2 - window_start)
-    interval = f"{_timestamp_text(window_start)}%+{_timestamp_text(window_duration)}"
+def _scan_frame_times(ffprobe: str, source: VideoSource) -> list[Fraction]:
+    """Read timestamps from the start through the latest requested sample.
+
+    Starting a short read interval near a target is not reliable for every MP4:
+    ffprobe can seek back to an earlier keyframe, then apply the interval length
+    from that keyframe and stop before reaching the requested time. Scanning
+    forward from the beginning avoids that keyframe-seek offset.
+    """
+    latest_target = source.start_time + max(TIMESTAMPS_S)
+    scan_duration = Fraction(max(TIMESTAMPS_S) + 2)
+    # An omitted interval start means continue from the current position rather
+    # than performing another timestamp-based seek. The scan is bounded to the
+    # last requested time plus the same two-second margin used for selection.
+    interval = f"%+{_timestamp_text(scan_duration)}"
     result = _run(
         [
             ffprobe,
@@ -130,25 +137,41 @@ def _nearest_frame_time(ffprobe: str, source: VideoSource, requested_time_s: int
             "-of", "json",
             str(source.path),
         ],
-        f"Finding a frame for {source.camera} at {requested_time_s} seconds",
+        f"Scanning {source.camera} frame timestamps through {max(TIMESTAMPS_S)} seconds",
     )
     try:
         frames = json.loads(result.stdout).get("frames", [])
-        timestamps = [
-            _fraction(frame.get("best_effort_timestamp_time"))
-            for frame in frames
-            if frame.get("best_effort_timestamp_time") not in (None, "N/A")
-            and abs(_fraction(frame.get("best_effort_timestamp_time")) - target) <= 2
-        ]
+        timestamps = []
+        for frame in frames:
+            raw = frame.get("best_effort_timestamp_time")
+            if raw in (None, "N/A"):
+                continue
+            timestamp = _fraction(raw)
+            if timestamp <= latest_target + 2:
+                timestamps.append(timestamp)
     except (ValueError, TypeError, ZeroDivisionError) as exc:
         raise Step03Error(
-            f"Could not read frame timestamps from {source.camera} at {requested_time_s} seconds: {source.path}"
+            f"Could not read frame timestamps from {source.camera}: {source.path}"
         ) from exc
     if not timestamps:
         raise Step03Error(
+            f"No decodable frames were found in {source.camera} through {max(TIMESTAMPS_S)} seconds: {source.path}"
+        )
+    return timestamps
+
+
+def _nearest_frame_time(
+    source: VideoSource,
+    requested_time_s: int,
+    timestamps: list[Fraction],
+) -> Fraction:
+    target = source.start_time + requested_time_s
+    candidates = [timestamp for timestamp in timestamps if abs(timestamp - target) <= 2]
+    if not candidates:
+        raise Step03Error(
             f"No decodable frame was found in {source.camera} near {requested_time_s} seconds: {source.path}"
         )
-    return min(timestamps, key=lambda timestamp: abs(timestamp - target))
+    return min(candidates, key=lambda timestamp: abs(timestamp - target))
 
 
 def _extract_frame(
@@ -289,7 +312,9 @@ def extract_aligned_images(
                     f"{source.camera} video is too short for the {requested_time_s}-second frame "
                     f"({float(source.duration):.6f}s): {source.path}"
                 )
-            presentation_time = _nearest_frame_time(ffprobe, source, requested_time_s)
+        frame_times = _scan_frame_times(ffprobe, source)
+        for requested_time_s in TIMESTAMPS_S:
+            presentation_time = _nearest_frame_time(source, requested_time_s, frame_times)
             selections.append(FrameSelection(source, requested_time_s, presentation_time))
 
     output_dir.mkdir(parents=True, exist_ok=True)
