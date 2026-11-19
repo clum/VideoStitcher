@@ -1,4 +1,4 @@
-"""Select and save a rectangular region from a captured video frame."""
+"""Select and save a rectangular region directly from a video preview."""
 
 from __future__ import annotations
 
@@ -69,9 +69,7 @@ class RegionOfInterestApp:
         self.video_duration = 0.0
         self.current_time = 0.0
         self.current_frame: np.ndarray | None = None
-        self.still_frame: np.ndarray | None = None
-        self.still_time: float | None = None
-        self.showing_still = False
+        self.selection_time: float | None = None
         self.top_left: tuple[int, int] | None = None
         self.bottom_right: tuple[int, int] | None = None
         self.display_box: tuple[float, float, float, float] | None = None
@@ -96,14 +94,12 @@ class RegionOfInterestApp:
 
         settings_row = ttk.Frame(container)
         settings_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        settings_row.columnconfigure(1, weight=1)
-        ttk.Label(settings_row, text="Settings JSON:").grid(row=0, column=0, padx=(0, 6))
+        settings_row.columnconfigure(2, weight=1)
+        ttk.Button(settings_row, text="Browse settings...", command=self.browse_settings).grid(row=0, column=0)
+        ttk.Label(settings_row, text="Settings JSON:").grid(row=0, column=1, padx=(8, 6))
         self.settings_path_var = tk.StringVar()
         ttk.Label(settings_row, textvariable=self.settings_path_var, anchor="w").grid(
-            row=0, column=1, sticky="ew"
-        )
-        ttk.Button(settings_row, text="Browse settings...", command=self.browse_settings).grid(
-            row=0, column=2, padx=(8, 0)
+            row=0, column=2, sticky="ew"
         )
 
         video_row = ttk.Frame(container)
@@ -135,16 +131,13 @@ class RegionOfInterestApp:
         self.seek_scale.bind("<ButtonRelease-1>", self.seek_to_slider)
         self.clock_var = tk.StringVar(value="00:00:00.000 / 00:00:00.000")
         ttk.Label(controls, textvariable=self.clock_var, width=28, anchor="e").pack(side="right", padx=6)
-        self.capture_button = ttk.Button(controls, text="Capture still", command=self.capture_still)
-        self.capture_button.pack(side="right", padx=(8, 0))
-
         actions = ttk.Frame(container)
         actions.grid(row=4, column=0, sticky="ew", pady=(6, 0))
         self.clear_button = ttk.Button(actions, text="Clear selection", command=self.clear_roi)
         self.clear_button.pack(side="left")
         self.save_button = ttk.Button(actions, text="Save ROI...", command=self.save_roi, state="disabled")
         self.save_button.pack(side="right")
-        self.status_var = tk.StringVar(value="Seek to a frame and select Capture still to begin.")
+        self.status_var = tk.StringVar(value="Seek to the desired frame, then click its top-left ROI corner.")
         ttk.Label(container, textvariable=self.status_var, anchor="w", wraplength=1000).grid(
             row=5, column=0, sticky="ew", pady=(6, 0)
         )
@@ -208,14 +201,12 @@ class RegionOfInterestApp:
         self.video_fps = fps
         self.video_duration = duration
         self.video_path_var.set(str(path))
-        self.still_frame = None
-        self.still_time = None
-        self.showing_still = False
+        self.selection_time = None
         self.seek_scale.configure(to=max(0.0, duration - 1.0 / fps))
         self.time_var.set(0.0)
         self._decode_at(0.0)
         self.clear_roi()
-        self._set_status(f"Loaded {width}x{height} video at {fps:.6g} fps ({duration:.3f}s). Seek and capture a still frame.")
+        self._set_status(f"Loaded {width}x{height} video at {fps:.6g} fps ({duration:.3f}s). Seek and click the video preview to select the ROI.")
 
     def _decode_at(self, seconds: float) -> bool:
         if self.capture is None or self.video_fps <= 0:
@@ -228,7 +219,6 @@ class RegionOfInterestApp:
             return False
         self.current_frame = frame
         self.current_time = frame_index / self.video_fps
-        self.showing_still = False
         self.updating_slider = True
         self.time_var.set(self.current_time)
         self.updating_slider = False
@@ -248,7 +238,7 @@ class RegionOfInterestApp:
         if not self._decode_at(self.time_var.get()):
             self._set_status("Seek failed; the last successfully decoded frame is still available.")
         else:
-            self._set_status(f"Preview at {self._format_time(self.current_time)}. Capture still to select its ROI.")
+            self._set_status(f"Preview at {self._format_time(self.current_time)}. Click the video preview to select the ROI.")
 
     def toggle_play(self) -> None:
         if self.playing:
@@ -270,7 +260,6 @@ class RegionOfInterestApp:
         self.current_frame = frame
         frame_number = max(0, int(self.capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1)
         self.current_time = frame_number / self.video_fps
-        self.showing_still = False
         self.updating_slider = True
         self.time_var.set(self.current_time)
         self.updating_slider = False
@@ -296,46 +285,39 @@ class RegionOfInterestApp:
             self._decode_at(0.0)
             self._set_status("Stopped at the beginning of the video.")
 
-    def capture_still(self) -> None:
-        if self.current_frame is None:
-            self._set_status("No decoded frame is available to capture.")
-            return
-        self.pause()
-        self.still_frame = self.current_frame.copy()
-        self.still_time = self.current_time
-        self.showing_still = True
-        self.dragging_corner = None
-        self.top_left = None
-        self.bottom_right = None
-        self.save_button.configure(state="disabled")
-        self.render()
-        self._set_status(
-            f"Captured frame at {self._format_time(self.still_time)}. Click the top-left corner, then bottom-right."
-        )
-
     def clear_roi(self) -> None:
         self.dragging_corner = None
         self.top_left = None
         self.bottom_right = None
+        self.selection_time = None
         self.save_button.configure(state="disabled")
         self.render()
-        self._set_status("ROI selection cleared. Capture a still frame, then click the two corners.")
+        self._set_status("ROI selection cleared. Seek to the desired frame, then click its top-left corner.")
 
     def canvas_click(self, event) -> None:
         if (
-            not self.showing_still or self.still_frame is None or self.display_box is None
+            self.current_frame is None or self.display_box is None
             or self.bottom_right is not None
         ):
             return
         left, top, shown_width, shown_height = self.display_box
         if not (left <= event.x < left + shown_width and top <= event.y < top + shown_height):
             return
-        height, width = self.still_frame.shape[:2]
+        # Freeze playback on an actual image click; no separate capture step is
+        # needed. The first corner's playhead time is kept as selection metadata.
+        self.pause()
+        if self.top_left is None:
+            self.selection_time = self.current_time
+        height, width = self.current_frame.shape[:2]
         x = min(width - 1, max(0, int((event.x - left) * width / shown_width)))
         y = min(height - 1, max(0, int((event.y - top) * height / shown_height)))
         if self.top_left is None:
             self.top_left = (x, y)
-            self._set_status(f"Top-left corner: ({x}, {y}). Now click the bottom-right corner.")
+            self._set_status(
+                f"Top-left corner: ({x}, {y}) at "
+                f"{self._format_time(self.selection_time if self.selection_time is not None else self.current_time)}. "
+                "Now click the bottom-right corner."
+            )
         elif x <= self.top_left[0] or y <= self.top_left[1]:
             self._set_status("Bottom-right must be to the right of and below the top-left corner. Try again.")
             return
@@ -357,7 +339,7 @@ class RegionOfInterestApp:
         """Start dragging a completed ROI corner, or handle a new corner click."""
         self.dragging_corner = None
         if (
-            self.showing_still and self.top_left is not None and self.bottom_right is not None
+            self.top_left is not None and self.bottom_right is not None
             and self.display_box is not None
         ):
             # Pick whichever control point is nearest to the pointer, provided it
@@ -370,18 +352,19 @@ class RegionOfInterestApp:
                 if distance_squared <= marker_radius**2:
                     candidates.append((distance_squared, name))
             if candidates:
+                self.pause()
                 self.dragging_corner = min(candidates)[1]
                 self.canvas.configure(cursor="fleur")
                 return
         self.canvas_click(event)
 
     def canvas_drag(self, event) -> None:
-        if self.dragging_corner is None or self.still_frame is None or self.display_box is None:
+        if self.dragging_corner is None or self.current_frame is None or self.display_box is None:
             return
         left, top, shown_width, shown_height = self.display_box
         if not (left <= event.x < left + shown_width and top <= event.y < top + shown_height):
             return
-        height, width = self.still_frame.shape[:2]
+        height, width = self.current_frame.shape[:2]
         x = min(width - 1, max(0, int((event.x - left) * width / shown_width)))
         y = min(height - 1, max(0, int((event.y - top) * height / shown_height)))
         if self.dragging_corner == "top_left":
@@ -402,7 +385,7 @@ class RegionOfInterestApp:
 
     def canvas_release(self, _event=None) -> None:
         valid = False
-        if self.top_left is not None and self.bottom_right is not None:
+        if self.current_frame is not None and self.top_left is not None and self.bottom_right is not None:
             valid, expanded_axes = self._normalize_roi_dimensions()
             if valid:
                 self.save_button.configure(state="normal")
@@ -421,14 +404,13 @@ class RegionOfInterestApp:
                 )
         self.dragging_corner = None
         self.canvas.configure(cursor="")
-        if self.showing_still:
-            self.render()
+        self.render()
 
     def _normalize_roi_dimensions(self) -> tuple[bool, list[str]]:
         """Expand odd ROI dimensions by one pixel without exceeding the frame."""
-        if self.still_frame is None or self.top_left is None or self.bottom_right is None:
+        if self.current_frame is None or self.top_left is None or self.bottom_right is None:
             return False, []
-        height, width = self.still_frame.shape[:2]
+        height, width = self.current_frame.shape[:2]
         left, top = self.top_left
         right, bottom = self.bottom_right
         expanded_axes: list[str] = []
@@ -461,12 +443,12 @@ class RegionOfInterestApp:
         self.canvas.delete("all")
         self.display_box = None
         self.photo = None
-        image = self.still_frame if self.showing_still and self.still_frame is not None else self.current_frame
+        image = self.current_frame
         if image is None:
             self.canvas.create_text(
                 max(1, self.canvas.winfo_width() // 2),
                 max(1, self.canvas.winfo_height() // 2),
-                text="Open a video, seek to a frame, then capture it for ROI selection.", fill="white",
+                text="Open a video, seek to a frame, then click the preview to select the ROI.", fill="white",
             )
             return
         canvas_width, canvas_height = max(1, self.canvas.winfo_width()), max(1, self.canvas.winfo_height())
@@ -483,9 +465,9 @@ class RegionOfInterestApp:
         self.photo = tk.PhotoImage(master=self.canvas, data=base64.b64encode(png.tobytes()).decode("ascii"))
         self.canvas.create_image(left, top, image=self.photo, anchor="nw")
         self.display_box = (left, top, shown_width, shown_height)
-        if self.showing_still and self.still_frame is not None and self.top_left is not None:
+        if self.top_left is not None:
             self._draw_marker(self.top_left, "#00ff66")
-        if self.showing_still and self.still_frame is not None and self.bottom_right is not None and self.top_left is not None:
+        if self.bottom_right is not None and self.top_left is not None:
             self._draw_marker(self.bottom_right, "#ff5a5f")
             radius = 5
             x1, y1 = self._display_point(self.top_left)
@@ -493,9 +475,9 @@ class RegionOfInterestApp:
             self.canvas.create_rectangle(x1, y1, x2, y2, outline="#00ff66", width=2)
 
     def _display_point(self, point: tuple[int, int]) -> tuple[float, float]:
-        assert self.display_box is not None and self.still_frame is not None
+        assert self.display_box is not None and self.current_frame is not None
         left, top, shown_width, shown_height = self.display_box
-        height, width = self.still_frame.shape[:2]
+        height, width = self.current_frame.shape[:2]
         return left + (point[0] + 0.5) * shown_width / width, top + (point[1] + 0.5) * shown_height / height
 
     def _draw_marker(self, point: tuple[int, int], color: str) -> None:
@@ -505,10 +487,10 @@ class RegionOfInterestApp:
 
     def save_roi(self) -> None:
         if (
-            self.video_path is None or self.still_frame is None or self.still_time is None
+            self.video_path is None or self.current_frame is None or self.selection_time is None
             or self.top_left is None or self.bottom_right is None
         ):
-            messagebox.showwarning("ROI incomplete", "Capture a frame and select both rectangle corners before saving.", parent=self.root)
+            messagebox.showwarning("ROI incomplete", "Select both ROI corners directly on the video preview before saving.", parent=self.root)
             return
         roi_width = self.bottom_right[0] - self.top_left[0] + 1
         roi_height = self.bottom_right[1] - self.top_left[1] + 1
@@ -529,12 +511,12 @@ class RegionOfInterestApp:
             output_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             output_path = output_dir / f"{prefix}_RegionOfInterest_{timestamp}.json"
-            height, width = self.still_frame.shape[:2]
+            height, width = self.current_frame.shape[:2]
             record = {
                 "ScenarioName": scenario_value,
                 "CreatedAtLocal": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "SourceVideoPath": str(self.video_path),
-                "FrameTime_s": self.still_time,
+                "FrameTime_s": self.selection_time,
                 "FrameWidth_px": width,
                 "FrameHeight_px": height,
                 "RegionOfInterest": {
