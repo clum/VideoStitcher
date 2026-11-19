@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import Sequence
 import tkinter as tk
 from tkinter import Canvas, Listbox, StringVar, Tk, filedialog, messagebox, ttk
 
@@ -253,10 +255,10 @@ class ImageSide:
 
 
 class ImageCoordinateApp:
-    def __init__(self, root: Tk, repository_root: Path) -> None:
+    def __init__(self, root: Tk, repository_root: Path, settings_path: Path | None = None) -> None:
         self.root = root
         self.repository_root = repository_root
-        self.settings_path = repository_root / "settings.json"
+        self.settings_path = settings_path or (repository_root / "settings.json")
         root.title("Video Stitcher — Select Image Coordinates")
         root.minsize(900, 650)
 
@@ -432,9 +434,34 @@ class ImageCoordinateApp:
                 temporary_path.unlink()
 
 
-def main(repository_root: Path) -> int:
+def main(repository_root: Path | None = None, argv: Sequence[str] | None = None) -> int:
+    repository_root = (repository_root or Path(__file__).resolve().parents[2]).resolve()
+    parser = argparse.ArgumentParser(description="Select corresponding image coordinates for the configured scenario.")
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
+    )
+    args = parser.parse_args(argv)
+    settings_path = args.settings.expanduser() if args.settings else Path("settings.json")
+    if not settings_path.is_absolute():
+        settings_path = repository_root / settings_path
+    settings_path = settings_path.resolve()
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(settings, dict):
+            raise ValueError("The settings file must contain a JSON object.")
+        scenario = settings.get("ScenarioName")
+        if not isinstance(scenario, str) or not scenario.strip():
+            raise ValueError("Set a non-empty ScenarioName in the selected settings file.")
+        scenario_prefix(scenario)
+        results_directory(settings, repository_root)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        print(f"Step 04 could not start with settings file {settings_path}: {exc}")
+        return 1
+
     root = Tk()
-    ImageCoordinateApp(root, repository_root.resolve())
+    ImageCoordinateApp(root, repository_root, settings_path)
     try:
         root.state("zoomed")
     except tk.TclError:

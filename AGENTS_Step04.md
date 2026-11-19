@@ -46,6 +46,14 @@ conda activate VideoStitcher
 python Workflow/Step04_SelectImageCoordinates.py
 ```
 
+Use a specific settings file to resolve `ScenarioName` and `ResultsDirectory`:
+
+```powershell
+python Workflow/Step04_SelectImageCoordinates.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+```
+
+Relative `--settings` paths resolve from the repository root. The GUI's settings Browse control remains available for changing the active file after launch.
+
 ## Acceptance criteria
 
 - The user can browse independently for left and right images, see both images at once, and select either one first.
@@ -55,4 +63,4 @@ python Workflow/Step04_SelectImageCoordinates.py
 - Saving a complete pair writes a valid JSON record under `ResultsDirectory/Step04_ImageCoordinates/` with both paths, dimensions, and ordered coordinate lists. Missing inputs, empty point lists, failed image reads, and failed writes produce actionable errors.
 - The settings-file Browse control displays the active path, rejects invalid settings without changing the current selection, and saves coordinate records under the selected file's `ResultsDirectory`.
 - Exporting a valid coordinate JSON writes both image paths and their corresponding ordered point lists as `[x, y],` lines in a text file; malformed JSON or failed writes produce an actionable error.
-- The workflow can be started from the repository root with `python Workflow/Step04_SelectImageCoordinates.py`; reusable logic resides under `Utilities/`.
+- The workflow can be started from the repository root with `python Workflow/Step04_SelectImageCoordinates.py`, and accepts `--settings PATH` to select the settings file at launch; reusable logic resides under `Utilities/`.
