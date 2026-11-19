@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Apply the homography computed in Step 05 to the corresponding right image, create a full-scene preview with the left image, and save both results.
+Apply the homography computed in Step 05 to the corresponding right image, create a full-scene preview with the left image, and save both results.  Note that the purpose of this step is to visualize the stiching process using only still images/frames (video stitching is done in a subsequent step).
 
 ## Inputs
 

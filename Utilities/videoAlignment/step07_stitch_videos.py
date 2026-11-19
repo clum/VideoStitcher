@@ -23,6 +23,9 @@ from .stitching_common import StitchingError, load_coordinate_data, load_setting
 from .workflow_paths import VIDEO_EXTENSIONS, results_directory, scenario_prefix
 
 
+FRAME_PROBE_TAIL_MARGIN_S = 2.0
+
+
 @dataclass
 class VideoInfo:
     path: Path
@@ -68,7 +71,11 @@ def _probe_video(ffprobe: str, path: Path, timestamp_limit: float | None = None)
         raise StitchingError(f"Invalid dimensions or frame rate in {path}")
     frame_probe_args = ["-select_streams", "v:0"]
     if timestamp_limit is not None:
-        frame_probe_args.extend(["-read_intervals", f"%+{timestamp_limit:.9f}"])
+        # Probe beyond the requested preview end so ffprobe can emit frames
+        # held back by codec reordering (for example, H.264 B-frames). The
+        # encoder still limits output to timestamp_limit.
+        probe_limit = timestamp_limit + FRAME_PROBE_TAIL_MARGIN_S
+        frame_probe_args.extend(["-read_intervals", f"%+{probe_limit:.9f}"])
     frame_probe_args.extend(["-show_frames", "-show_entries", "frame=best_effort_timestamp_time,pts_time"])
     frames_data = _run_probe(ffprobe, frame_probe_args, path)
     timestamps: list[float] = []
