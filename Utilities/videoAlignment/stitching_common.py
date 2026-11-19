@@ -77,6 +77,9 @@ def resolve_coordinate_record(
             "Run Step04_SelectImageCoordinates.py first."
         )
     prefix = scenario_prefix(settings["ScenarioName"])
+    stable_record = output / f"{prefix}_Coordinates.json"
+    if stable_record.is_file():
+        return stable_record
     candidates = sorted(output.glob(f"{prefix}_Coordinates_*.json"), key=lambda path: path.name)
     if not candidates:
         raise StitchingError(

@@ -7,7 +7,7 @@ Estimate the homography that maps right-image landmark coordinates to their corr
 ## Inputs
 
 - By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for coordinate-record selection and homography output. Relative `ResultsDirectory` paths resolve from the repository root.
-- By default, load the lexicographically newest `{ScenarioName}_Coordinates_*.json` from `ResultsDirectory/Step04_ImageCoordinates/`. Step 04 filenames include a sortable timestamp.
+- By default, load `{ScenarioName}_Coordinates.json` from `ResultsDirectory/Step04_ImageCoordinates/`. For compatibility with existing projects, if the stable file is absent, use the lexicographically newest legacy `{ScenarioName}_Coordinates_*.json` record.
 - Accept `--coordinates PATH` to use a specific Step 04 record instead. Resolve relative paths from the repository root.
 - Read `Left.ImagePath`, `Right.ImagePath`, `Left.Points`, and `Right.Points` from that record. Each point is an integer `{ "x": ..., "y": ... }` pair, and both lists must contain at least four corresponding points in the same order.
 - The coordinate record's `ScenarioName` must match the configured scenario. Validate positive recorded dimensions and ensure every point is an integer within its recorded image bounds. Step 05 does not decode or modify the source images.
@@ -29,7 +29,7 @@ python Workflow/Step05_ComputeHomography.py
 Use a specific coordinate record with:
 
 ```powershell
-python Workflow/Step05_ComputeHomography.py --coordinates Outputs/Step04_ImageCoordinates/26_10_31_Mukilteo_Coordinates_20261107_231421_060166.json
+python Workflow/Step05_ComputeHomography.py --coordinates Outputs/Step04_ImageCoordinates/26_10_31_Mukilteo_Coordinates.json
 ```
 
 Use a user-selected settings file:

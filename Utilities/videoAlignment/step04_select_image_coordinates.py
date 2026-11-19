@@ -378,12 +378,7 @@ class ImageCoordinateApp:
             scenario = scenario_prefix(scenario_value)
             output_dir = results_directory(settings, self.repository_root) / "Step04_ImageCoordinates"
             output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            output_path = output_dir / f"{scenario}_Coordinates_{timestamp}.json"
-            suffix = 1
-            while output_path.exists():
-                output_path = output_dir / f"{scenario}_Coordinates_{timestamp}_{suffix}.json"
-                suffix += 1
+            output_path = output_dir / f"{scenario}_Coordinates.json"
             record = {
                 "ScenarioName": settings.get("ScenarioName"),
                 "CreatedAtLocal": datetime.now().astimezone().isoformat(timespec="seconds"),
