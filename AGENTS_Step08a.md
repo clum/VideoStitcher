@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07 and recording long, uninteresting intervals—such as halftime breaks or timeouts—for Step 08b to remove. Step 08a only identifies intervals and writes a CSV; it must not modify or re-encode the video.
+Provide a resizable PySide6 GUI for reviewing the stitched video from Step 07a and recording long, uninteresting intervals—such as halftime breaks or timeouts—for Step 08b to remove. Step 08a only identifies intervals and writes a CSV; it must not modify or re-encode the video.
 
 ## Inputs
 
 - By default, read the repository-root `settings.json`. Accept `--settings PATH` to use another settings JSON; relative paths resolve from the repository root. Use the selected file's `ScenarioName` and `ResultsDirectory` for default video and CSV paths. Relative `ResultsDirectory` paths resolve from the repository root.
-- By default, open `ResultsDirectory/Step07_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to specify an input video when launching Step 08a; resolve relative paths from the repository root. If omitted, use the configured Step 07 output.
+- By default, open `ResultsDirectory/Step07a_StitchedVideos/{ScenarioName}_Stitched.mp4`. Accept `--video PATH` to specify an input video when launching Step 08a; resolve relative paths from the repository root. If omitted, use the configured Step 07a output. Existing files under `Step07_StitchedVideos` are not moved; pass their path with `--video` to continue using one.
 - Provide a Browse control so the user can select another supported video from the GUI, and display the full selected path. A GUI selection replaces the startup/default input for the current session.
 - Place a small annotation above the Browse video button recommending a lower-resolution proxy video for review.
 - Provide a Browse CSV control for choosing the output directory and filename. Start with the configured scenario-based CSV path. Selecting a new path keeps the current ranges and changes where the next explicit save writes.
@@ -50,7 +50,7 @@ Then run Step 08a:
 python Workflow/Step08a_IdentifyRemovals.py
 ```
 
-Open a specific video instead of the configured Step 07 output:
+Open a specific video instead of the configured Step 07a output:
 
 ```powershell
 python Workflow/Step08a_IdentifyRemovals.py --video "path/to/video.mp4"

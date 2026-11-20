@@ -1,4 +1,4 @@
-"""Timestamp-align, warp, composite, and encode the Step 07 video pair."""
+"""Timestamp-align, warp, composite, and encode the Step 07a video pair."""
 
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ def _next_frame(capture: cv2.VideoCapture, path: Path, frame_number: int) -> np.
 def _ffmpeg_tools() -> tuple[str, str]:
     ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
-        raise StitchingError("FFmpeg and ffprobe must be installed and available on PATH for Step 07.")
+        raise StitchingError("FFmpeg and ffprobe must be installed and available on PATH for Step 07a.")
     return ffmpeg, ffprobe
 
 
@@ -338,7 +338,7 @@ def _encode(
                     if output_number == 1 or output_number % max(1, int(fps * 5)) == 0 or output_number == expected_count:
                         elapsed = time.monotonic() - started
                         percent = output_number * 100 / expected_count
-                        print(f"Step 07: {output_number}/{expected_count} frames ({percent:.1f}%), {elapsed:.1f}s elapsed", flush=True)
+                        print(f"Step 07a: {output_number}/{expected_count} frames ({percent:.1f}%), {elapsed:.1f}s elapsed", flush=True)
                         last_report = output_number
                 process.stdin.close()
                 return_code = process.wait()
@@ -444,7 +444,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
         print(f"Panorama dimensions: {canvas_size[0]}x{canvas_size[1]}; output duration: {output_duration:.3f}s")
         if args.preview_seconds is not None:
             print(f"Preview mode: first {output_duration:.3f}s; the full stitched output will be left unchanged.")
-        output_dir = results_directory(settings, root) / "Step07_StitchedVideos"
+        output_dir = results_directory(settings, root) / "Step07a_StitchedVideos"
         output_dir.mkdir(parents=True, exist_ok=True)
         scenario = scenario_prefix(settings["ScenarioName"])
         output_name = f"{scenario}_Stitched_Preview.mp4" if args.preview_seconds is not None else f"{scenario}_Stitched.mp4"
@@ -461,7 +461,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
         print(f"{'Preview' if args.preview_seconds is not None else 'Stitched'} video saved to: {output_path.resolve()}")
         return 0
     except (StitchingError, OSError, ValueError, cv2.error, subprocess.SubprocessError) as exc:
-        print(f"Step 07 failed: {exc}", file=sys.stderr)
+        print(f"Step 07a failed: {exc}", file=sys.stderr)
         return 1
     finally:
         if temporary_output is not None:

@@ -109,12 +109,23 @@ def _load_ranges(path: Path, duration: float) -> list[tuple[float, float]]:
                     raise RemovalError(f"CSV row {row_number} must contain exactly four columns.")
                 start = _parse_timestamp(row[1], row_number, "StartTime")
                 end = _parse_timestamp(row[2], row_number, "EndTime")
-                if start < 0 or start >= end or end > duration:
+                if start < 0 or start >= end:
                     raise RemovalError(
-                        f"CSV row {row_number} must satisfy 0 <= StartTime < EndTime <= "
-                        f"video duration ({duration:.3f}s)."
+                        f"CSV row {row_number} must satisfy 0 <= StartTime < EndTime."
                     )
-                ranges.append((start, end))
+                effective_end = min(end, duration)
+                if effective_end != end:
+                    print(
+                        f"CSV row {row_number}: EndTime {end:.3f}s exceeds the video "
+                        f"duration ({duration:.3f}s); using the video end."
+                    )
+                if start >= effective_end:
+                    raise RemovalError(
+                        f"CSV row {row_number} starts at or after the video duration "
+                        f"({duration:.3f}s), so the interval is empty after limiting "
+                        "EndTime to the video end."
+                    )
+                ranges.append((start, effective_end))
     except OSError as exc:
         raise RemovalError(f"Could not read removal CSV {path}: {exc}") from exc
     ranges.sort()
@@ -281,7 +292,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         type=Path,
         help="Settings JSON to use (relative paths resolve from the repository root; default: settings.json).",
     )
-    parser.add_argument("--video", help="Source video; defaults to the configured Step 07 stitched MP4.")
+    parser.add_argument("--video", help="Source video; defaults to the configured Step 07a stitched MP4.")
     parser.add_argument("--removals", help="Step 08a CSV; defaults to the configured scenario CSV.")
     return parser.parse_args(argv)
 
@@ -295,7 +306,7 @@ def main(repository_root: Path | None = None, argv: Sequence[str] | None = None)
         ffmpeg, ffprobe = _tools()
         scenario = scenario_prefix(settings["ScenarioName"])
         source = _resolve_path(args.video, root) if args.video else (
-            results_directory(settings, root) / "Step07_StitchedVideos" / f"{scenario}_Stitched.mp4"
+            results_directory(settings, root) / "Step07a_StitchedVideos" / f"{scenario}_Stitched.mp4"
         ).resolve()
         removals_path = _resolve_path(args.removals, root) if args.removals else (
             results_directory(settings, root) / "Step08a_IdentifyRemovals" / f"{scenario}_RemovalSegments.csv"

@@ -1,4 +1,4 @@
-# Step 07: Stitch Aligned Videos
+# Step 07a: Stitch Aligned Videos
 
 ## Purpose
 
@@ -23,42 +23,42 @@ Apply the Step 05 homography to synchronized frames from the aligned Camera A an
 
 ## Output and encoding
 
-- A full run writes `{ScenarioName}_Stitched.mp4` under `ResultsDirectory/Step07_StitchedVideos/`. A run with `--preview-seconds N` writes `{ScenarioName}_Stitched_Preview.mp4` in the same folder, leaving the full stitched output untouched.
+- A full run writes `{ScenarioName}_Stitched.mp4` under `ResultsDirectory/Step07a_StitchedVideos/`. A run with `--preview-seconds N` writes `{ScenarioName}_Stitched_Preview.mp4` in the same folder, leaving the full stitched output untouched. Existing files under the former `Step07_StitchedVideos` folder are not moved; downstream steps can use them through their `--video` option.
 - Use Camera A's frame rate and audio. If Camera A has no audio stream, produce a silent MP4 and report this clearly. Do not take audio from Camera B.
 - Follow Step 02's H.264/AAC export settings (H.264 video, AAC audio where present, and the same quality, pixel-format, and audio parameters configured there). Preserve the intended playback duration and timestamps.
-- Encode to a temporary file in the Step 07 output folder. Verify the completed file can be probed/read and has expected video dimensions, frame rate, duration, and audio presence before replacing its corresponding full or preview output. On failure, remove only the temporary file and leave any prior output untouched.
-- Full reruns replace only `{ScenarioName}_Stitched.mp4`; preview reruns replace only `{ScenarioName}_Stitched_Preview.mp4`. Preserve both source videos, homography/coordinate artifacts, and unrelated Step 07 files.
+- Encode to a temporary file in the Step 07a output folder. Verify the completed file can be probed/read and has expected video dimensions, frame rate, duration, and audio presence before replacing its corresponding full or preview output. On failure, remove only the temporary file and leave any prior output untouched.
+- Full reruns replace only `{ScenarioName}_Stitched.mp4`; preview reruns replace only `{ScenarioName}_Stitched_Preview.mp4`. Preserve both source videos, homography/coordinate artifacts, and unrelated Step 07a files.
 
 ## Run
 
 From the repository root, with the `VideoStitcher` Conda environment active:
 
 ```powershell
-python Workflow/Step07_StitchVideos.py
+python Workflow/Step07a_StitchVideos.py
 ```
 
 Select a specific video pair:
 
 ```powershell
-python Workflow/Step07_StitchVideos.py --videos "path/to/left.mp4" "path/to/right.mp4"
+python Workflow/Step07a_StitchVideos.py --videos "path/to/left.mp4" "path/to/right.mp4"
 ```
 
 Select a specific homography and blend overlap pixels:
 
 ```powershell
-python Workflow/Step07_StitchVideos.py --homography "Outputs/Step05_Homography/example_Homography.json" --overlap-mode blend
+python Workflow/Step07a_StitchVideos.py --homography "Outputs/Step05_Homography/example_Homography.json" --overlap-mode blend
 ```
 
 Create a five-second preview before encoding the full video:
 
 ```powershell
-python Workflow/Step07_StitchVideos.py --preview-seconds 5
+python Workflow/Step07a_StitchVideos.py --preview-seconds 5
 ```
 
 Use a user-selected settings file:
 
 ```powershell
-python Workflow/Step07_StitchVideos.py --settings "settings_26_11_01_Soccer_WssaU14.json"
+python Workflow/Step07a_StitchVideos.py --settings "settings_26_11_01_Soccer_WssaU14.json"
 ```
 
 Options can be combined. Explicit video paths are ordered left/Camera A first, then right/Camera B.
@@ -77,4 +77,4 @@ Options can be combined. Explicit video paths are ordered left/Camera A first, t
 - `--preview-seconds` limits processing to the beginning of the common timeline and creates a separate preview output without replacing the full stitched MP4.
 - Preview timestamp probing includes a two-second tail for codec reordering, while the encoded video and Camera A audio remain limited to the requested preview duration.
 - Left-priority is the default; blend mode changes only overlap composition. Output uses Camera A's frame rate and Camera A audio when present, otherwise it is silent with a clear report.
-- A full run produces a verified `{ScenarioName}_Stitched.mp4`; a preview run produces a verified `{ScenarioName}_Stitched_Preview.mp4`. Failed runs leave prior outputs, source videos, and unrelated files intact.
+- A full run produces a verified `{ScenarioName}_Stitched.mp4` in `Step07a_StitchedVideos`; a preview run produces a verified `{ScenarioName}_Stitched_Preview.mp4` in the same folder. Failed runs leave prior outputs, source videos, and unrelated files intact.

@@ -8,7 +8,7 @@
 - Read `AGENTS_Step04.md` when implementing the image-coordinate selection GUI.
 - Read `AGENTS_Step05.md` when implementing homography estimation.
 - Read `AGENTS_Step06.md` when implementing image stitching.
-- Read `AGENTS_Step07.md` when implementing video stitching.
+- Read `AGENTS_Step07a.md` when implementing video stitching.
 - Read `AGENTS_Step07b.md` when converting a video to a lower resolution or frame rate.
 - Read `AGENTS_Step08a.md` when implementing removal-range identification.
 - Read `AGENTS_Step08b.md` when removing video sections identified by Step 08a.

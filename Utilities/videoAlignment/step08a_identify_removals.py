@@ -744,7 +744,7 @@ def main(repository_root: Path | None = None, argv: list[str] | None = None) -> 
         settings = load_settings(root_path, settings_path)
         ffprobe = _ffprobe_tool()
         default_video = Path(args.video).expanduser() if args.video else (
-            results_directory(settings, root_path) / "Step07_StitchedVideos"
+            results_directory(settings, root_path) / "Step07a_StitchedVideos"
             / f"{scenario_prefix(settings['ScenarioName'])}_Stitched.mp4"
         )
         if not default_video.is_absolute():
