@@ -509,8 +509,7 @@ class RegionOfInterestApp:
             prefix = scenario_prefix(scenario_value)
             output_dir = results_directory(self.settings, self.repository_root) / "Step09a_IdentifyRegionOfInterest"
             output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            output_path = output_dir / f"{prefix}_RegionOfInterest_{timestamp}.json"
+            output_path = output_dir / f"{prefix}_RegionOfInterest.json"
             height, width = self.current_frame.shape[:2]
             record = {
                 "ScenarioName": scenario_value,

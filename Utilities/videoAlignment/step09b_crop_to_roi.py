@@ -138,7 +138,13 @@ def _select_roi(
     prefix = scenario_prefix(scenario)
     if not folder.is_dir():
         raise CropError(f"Step 09a ROI folder does not exist: {folder}. Run Step 09a first or pass --roi PATH.")
-    candidates = sorted(folder.glob(f"{prefix}_RegionOfInterest_*.json"), key=lambda candidate: candidate.name, reverse=True)
+    stable_record = folder / f"{prefix}_RegionOfInterest.json"
+    legacy_records = sorted(
+        folder.glob(f"{prefix}_RegionOfInterest_*.json"),
+        key=lambda candidate: candidate.name,
+        reverse=True,
+    )
+    candidates = ([stable_record] if stable_record.is_file() else []) + legacy_records
     if not candidates:
         raise CropError(f"No ROI records for scenario {scenario!r} were found in {folder}. Run Step 09a first.")
     rejected: list[str] = []

@@ -26,7 +26,7 @@ Let the user review the Step 08b sections-removed video in the GUI and select a 
 ## Output and persistence
 
 - Save a complete ROI record as JSON under `ResultsDirectory/Step09a_IdentifyRegionOfInterest/`, creating the folder as needed.
-- Use a scenario-based filename with a unique timestamp, such as `{ScenarioName}_RegionOfInterest_{timestamp}.json`, so saving a new selection does not overwrite an unrelated record.
+- Use the stable scenario-based filename `{ScenarioName}_RegionOfInterest.json`. Saving a new selection for the same scenario replaces that scenario's prior ROI record; keep other scenario files untouched.
 - Record `ScenarioName`, source video path, playhead timestamp at the first corner in seconds, original frame width and height, and the final top-left and bottom-right pixel coordinates. Coordinates are zero-based pixel indices from the frame's top-left corner, with `x` increasing rightward and `y` increasing downward. Treat both endpoints as included in the rectangle; derived width and height are `bottom_right - top_left + 1` and must both be even.
 - Save only after the user explicitly requests Save and both corners define a non-empty rectangle. Write atomically and report the full destination path. This step does not create a separate still-image file.
 
@@ -60,5 +60,5 @@ Relative `--settings` and `--video` paths resolve from the repository root.
 - After completing the rectangle, the user can drag either corner control point and see the outline update; the saved coordinates match the final marker positions.
 - Every saved ROI has an even width and height. Odd dimensions are expanded by one pixel within the frame, using the opposite edge when the right or bottom edge is already at the frame boundary.
 - Click coordinates remain aligned with source-frame pixels when the preview is resized; padding clicks do not create points.
-- A complete selection saves one JSON record under `ResultsDirectory/Step09a_IdentifyRegionOfInterest/` with scenario, source video, frame timestamp and dimensions, and both corner coordinates.
+- A complete selection saves or replaces `{ScenarioName}_RegionOfInterest.json` under `ResultsDirectory/Step09a_IdentifyRegionOfInterest/` with scenario, source video, frame timestamp and dimensions, and both corner coordinates.
 - Incomplete or invalid selections cannot be saved, and source videos and existing ROI records remain unchanged.
